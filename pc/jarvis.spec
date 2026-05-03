@@ -81,6 +81,6 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='assets/icon.ico',   # optional: your icon file
-    version='version_info.txt',  # optional: version info
+
+
 )
