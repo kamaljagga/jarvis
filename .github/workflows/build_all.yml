@@ -45,9 +45,9 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'    # ← 3.11 not 3.12 (distutils removed in 3.12)
+          python-version: '3.11'
 
-      - name: System packages
+      - name: Install system packages
         run: |
           sudo apt update
           sudo apt install -y git zip unzip openjdk-17-jdk \
@@ -55,10 +55,25 @@ jobs:
             libltdl-dev libsdl2-dev libsdl2-image-dev \
             libsdl2-mixer-dev libsdl2-ttf-dev
 
-      - name: Install packages
+      - name: Set up Android SDK + accept licenses
         run: |
-          pip install --upgrade pip
-          pip install setuptools
+          export ANDROID_SDK_ROOT=$HOME/android-sdk
+          mkdir -p $ANDROID_SDK_ROOT/cmdline-tools
+          cd $ANDROID_SDK_ROOT/cmdline-tools
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip
+          unzip -q commandlinetools-linux-9477386_latest.zip
+          mv cmdline-tools latest
+          export PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          yes | sdkmanager "platform-tools" "build-tools;33.0.2" "platforms;android-33" > /dev/null 2>&1
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+          echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "$ANDROID_SDK_ROOT/platform-tools" >> $GITHUB_PATH
+          echo "$ANDROID_SDK_ROOT/build-tools/33.0.2" >> $GITHUB_PATH
+
+      - name: Install Python packages
+        run: |
+          pip install --upgrade pip setuptools
           pip install -r requirements_android.txt
 
       - name: Cache buildozer
@@ -71,7 +86,10 @@ jobs:
       - name: Build APK
         working-directory: android
         timeout-minutes: 30
-        run: buildozer android debug 2>&1
+        env:
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
+        run: |
+          yes | buildozer android debug 2>&1
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
