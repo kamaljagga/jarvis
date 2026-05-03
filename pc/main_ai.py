@@ -150,14 +150,14 @@ def time_greeting():
 # ─────────────────────────────────────────
 #  🔑 API KEYS — paste yours here
 # ─────────────────────────────────────────
-YOUTUBE_API_KEY = "YOUR_YOUTUBE_API_KEY"      # console.cloud.google.com
-WEATHER_API_KEY = "YOUR_OPENWEATHER_API_KEY"
-NEWS_API_KEY    = "YOUR_NEWSAPI_KEY"          # newsapi.org
+YOUTUBE_API_KEY  = "YOUR_YOUTUBE_API_KEY"       # console.cloud.google.com
+WEATHER_API_KEY  = "YOUR_OPENWEATHER_API_KEY"   # openweathermap.org/api
+NEWS_API_KEY     = "YOUR_NEWSAPI_KEY"           # newsapi.org
 YOUR_CITY        = "Rupnagar"                  # default city
 
 # 🤖 AI keys (both free)
-GROQ_API_KEY   = "YOUR_GROQ_API_KEY"
-GEMINI_API_KEY = "YOUR_GEMINI_API_KEY"        # aistudio.google.com
+GROQ_API_KEY     = "YOUR_GROQ_API_KEY"          # console.groq.com
+GEMINI_API_KEY   = "YOUR_GEMINI_API_KEY"        # aistudio.google.com
 
 # 📱 SMS — Fast2SMS (India, free tier — fast2sms.com)
 FAST2SMS_KEY     = "YOUR_FAST2SMS_API_KEY"      # fast2sms.com/dashboard
@@ -201,6 +201,11 @@ vosk_available = False
 def load_vosk():
     global VOSK_MODEL, vosk_available
     try:
+        # Fix vosk DLL path when running as PyInstaller EXE
+        if getattr(sys, 'frozen', False):
+            vosk_dll_path = os.path.join(sys._MEIPASS, 'vosk')
+            if os.path.exists(vosk_dll_path):
+                os.add_dll_directory(vosk_dll_path)
         from vosk import Model, KaldiRecognizer
         if not os.path.exists(VOSK_MODEL_PATH):
             print("⚠️  Vosk model not found. Using Google STT for wake word (less private).")
