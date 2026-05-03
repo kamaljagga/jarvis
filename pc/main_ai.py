@@ -153,7 +153,7 @@ def time_greeting():
 YOUTUBE_API_KEY  = "YOUR_YOUTUBE_API_KEY"       # console.cloud.google.com
 WEATHER_API_KEY  = "YOUR_OPENWEATHER_API_KEY"   # openweathermap.org/api
 NEWS_API_KEY     = "YOUR_NEWSAPI_KEY"           # newsapi.org
-YOUR_CITY        = "Rupnagar"                  # default city
+YOUR_CITY        = "Pathankot"                  # default city
 
 # 🤖 AI keys (both free)
 GROQ_API_KEY     = "YOUR_GROQ_API_KEY"          # console.groq.com
@@ -198,6 +198,41 @@ def speak(text):
 VOSK_MODEL     = None
 vosk_available = False
 
+def download_vosk_model():
+    """Auto-download Vosk model on first run. No manual download needed!"""
+    import urllib.request, zipfile
+    # Available models (comment/uncomment which you want):
+    # MODEL_URL = "https://alphacephei.com/vosk/models/vosk-model-small-en-in-0.4.zip"  # 36MB  — fast, less accurate
+    # MODEL_URL = "https://alphacephei.com/vosk/models/vosk-model-en-in-0.5.zip"        # 1GB   — accurate, Indian English
+    # MODEL_URL = "https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip"       # 1.8GB — best accuracy, US English
+    MODEL_URL  = "https://alphacephei.com/vosk/models/vosk-model-en-in-0.5.zip"        # 1GB Indian English (recommended)
+    ZIP_PATH   = os.path.join(BASE_DIR, "vosk-model.zip")
+    print("[Vosk] Model not found. Auto-downloading (36MB)... please wait.")
+    speak("Vosk model not found. Downloading now. This is a one time setup of about 1 gigabyte. Please wait.")
+    try:
+        def progress(count, block, total):
+            pct = int(count * block * 100 / total)
+            print(f"\r[Vosk] Downloading... {pct}%", end="", flush=True)
+        urllib.request.urlretrieve(MODEL_URL, ZIP_PATH, reporthook=progress)
+        print("\n[Vosk] Download complete. Extracting...")
+        with zipfile.ZipFile(ZIP_PATH, 'r') as z:
+            z.extractall(BASE_DIR)
+        os.remove(ZIP_PATH)
+        # Rename extracted folder to 'model'
+        # Find extracted folder automatically (works for any model)
+        extracted = next((os.path.join(BASE_DIR, d) for d in os.listdir(BASE_DIR)
+                         if d.startswith("vosk-model") and os.path.isdir(os.path.join(BASE_DIR, d))
+                         and d != "model"), None)
+        if extracted and os.path.exists(extracted):
+            os.rename(extracted, VOSK_MODEL_PATH)
+        print("[Vosk] Model ready!")
+        speak("Download complete. Vosk is ready.")
+        return True
+    except Exception as e:
+        print(f"[Vosk] Download failed: {e}")
+        speak("Download failed. Jarvis will use Google speech recognition instead.")
+        return False
+
 def load_vosk():
     global VOSK_MODEL, vosk_available
     try:
@@ -208,10 +243,10 @@ def load_vosk():
                 os.add_dll_directory(vosk_dll_path)
         from vosk import Model, KaldiRecognizer
         if not os.path.exists(VOSK_MODEL_PATH):
-            print("⚠️  Vosk model not found. Using Google STT for wake word (less private).")
-            print(f"   Download: https://alphacephei.com/vosk/models")
-            print(f"   Extract as: {VOSK_MODEL_PATH}")
-            return False
+            # Auto-download instead of asking user
+            if not download_vosk_model():
+                print("[Vosk] Falling back to Google STT.")
+                return False
         VOSK_MODEL = Model(VOSK_MODEL_PATH)
         vosk_available = True
         log_privacy("Wake word engine: Vosk OFFLINE ✅ (nothing sent to internet)")
