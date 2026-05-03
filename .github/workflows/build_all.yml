@@ -45,23 +45,21 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.11'    # ← 3.11 not 3.12 (distutils removed in 3.12)
 
       - name: System packages
         run: |
           sudo apt update
           sudo apt install -y git zip unzip openjdk-17-jdk \
-            libffi-dev libssl-dev build-essential libltdl-dev \
-            libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev
-
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: pip-android-${{ hashFiles('requirements_android.txt') }}
+            python3-pip libffi-dev libssl-dev build-essential \
+            libltdl-dev libsdl2-dev libsdl2-image-dev \
+            libsdl2-mixer-dev libsdl2-ttf-dev
 
       - name: Install packages
-        run: pip install -r requirements_android.txt
+        run: |
+          pip install --upgrade pip
+          pip install setuptools
+          pip install -r requirements_android.txt
 
       - name: Cache buildozer
         uses: actions/cache@v4
@@ -73,8 +71,7 @@ jobs:
       - name: Build APK
         working-directory: android
         timeout-minutes: 30
-        run: |
-          buildozer android debug 2>&1
+        run: buildozer android debug 2>&1
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
