@@ -1,0 +1,83 @@
+name: Build Jarvis — EXE + APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+
+  # ── Windows EXE ──────────────────────────────────────────────────
+  build-exe:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        working-directory: pc
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install SpeechRecognition pyttsx3 gTTS playsound==1.2.2 ^
+                      sounddevice numpy pyautogui pywhatkit requests ^
+                      psutil pyperclip vosk pycaw comtypes
+
+      - name: Build EXE
+        working-directory: pc
+        run: pyinstaller jarvis.spec
+
+      - name: Upload EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: Jarvis-Windows-EXE
+          path: pc/dist/Jarvis.exe
+          retention-days: 30
+
+  # ── Android APK ──────────────────────────────────────────────────
+  build-apk:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y git zip unzip openjdk-17-jdk \
+            python3-pip libffi-dev libssl-dev build-essential \
+            libltdl-dev libsdl2-dev libsdl2-image-dev \
+            libsdl2-mixer-dev libsdl2-ttf-dev
+
+      - name: Install buildozer
+        run: pip install buildozer cython==0.29.37
+
+      - name: Cache Buildozer
+        uses: actions/cache@v4
+        with:
+          path: ~/.buildozer
+          key: buildozer-${{ hashFiles('android/buildozer.spec') }}
+          restore-keys: buildozer-
+
+      - name: Build APK
+        working-directory: android
+        run: buildozer android debug 2>&1 | tail -50
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Jarvis-Android-APK
+          path: android/bin/*.apk
+          retention-days: 30

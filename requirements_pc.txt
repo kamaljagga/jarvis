@@ -1,0 +1,30 @@
+# ─────────────────────────────────────────
+#  J.A.R.V.I.S — PC (Windows) Requirements
+#  Python 3.12 recommended
+#  Install: pip install -r requirements_pc.txt
+# ─────────────────────────────────────────
+
+# Voice
+SpeechRecognition==3.10.4
+pyttsx3==2.90
+gTTS==2.5.1
+playsound==1.2.2
+sounddevice==0.4.6
+vosk==0.3.45
+
+# Math / Audio
+numpy==1.26.4
+
+# System Control
+pyautogui==0.9.54
+psutil==5.9.8
+pycaw==20230407
+comtypes==1.4.1
+pyperclip==1.8.2
+
+# Web / API
+requests==2.31.0
+pywhatkit==5.4
+
+# Build EXE
+pyinstaller==6.6.0

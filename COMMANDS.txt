@@ -1,0 +1,158 @@
+# ═══════════════════════════════════════════════════════════════
+#  J.A.R.V.I.S — ALL COMMANDS GUIDE
+#  Windows EXE + Android APK
+# ═══════════════════════════════════════════════════════════════
+
+
+# ───────────────────────────────────────────────────────────────
+#  SECTION 1 — WINDOWS EXE
+# ───────────────────────────────────────────────────────────────
+
+# ── Option A: WITH venv (recommended) ──────────────────────────
+
+# Step 1: Create venv with Python 3.12
+python -m venv venv_jarvis
+
+# Step 2: Activate venv
+venv_jarvis\Scripts\activate
+
+# Step 3: Upgrade pip
+python -m pip install --upgrade pip
+
+# Step 4: Install all PC packages
+pip install -r requirements_pc.txt
+
+# Step 5: Run Jarvis directly
+python pc\main_ai.py
+
+# Step 6: Build EXE
+cd pc
+pyinstaller jarvis.spec
+
+# EXE will be at:  pc\dist\Jarvis.exe
+# ── To deactivate venv later:
+deactivate
+
+
+# ── Option B: WITHOUT venv ──────────────────────────────────────
+
+# Step 1: Upgrade pip
+python -m pip install --upgrade pip
+
+# Step 2: Install all PC packages
+pip install -r requirements_pc.txt
+
+# Step 3: Run Jarvis directly
+python pc\main_ai.py
+
+# Step 4: Build EXE
+cd pc
+pyinstaller jarvis.spec
+
+# EXE will be at:  pc\dist\Jarvis.exe
+
+
+# ───────────────────────────────────────────────────────────────
+#  SECTION 2 — ANDROID APK
+#  APK cannot be built on Windows directly.
+#  Use one of these 3 methods:
+# ───────────────────────────────────────────────────────────────
+
+
+# ══ METHOD 1: GitHub Actions (easiest, no install needed) ══════
+#
+#  1. Create a GitHub account at github.com
+#  2. Create a new repository
+#  3. Upload your whole jarvis/ project folder
+#  4. Go to: your repo → Actions tab → Build Jarvis EXE + APK
+#  5. Click: Run workflow → Run workflow (green button)
+#  6. Wait 15-20 minutes
+#  7. Click the finished job → scroll down → Artifacts
+#  8. Download: Jarvis-Android-APK.zip → extract → install .apk
+#
+#  No setup needed on your PC at all!
+
+
+# ══ METHOD 2: WSL on Windows (Ubuntu inside Windows) ══════════
+
+# Step 1: Open PowerShell as Administrator and run:
+wsl --install
+
+# Step 2: Restart your PC, then open Ubuntu from Start Menu
+
+# Step 3: Inside Ubuntu terminal:
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y python3 python3-pip git zip unzip openjdk-17-jdk \
+    libffi-dev libssl-dev build-essential
+
+# Step 4: Install buildozer
+pip3 install buildozer cython==0.29.37
+
+# Step 5: Copy your android folder into WSL
+# (your Windows files are at /mnt/c/Users/YourName/)
+cp -r /mnt/c/Users/YourName/jarvis/android ~/jarvis_android
+cd ~/jarvis_android
+
+# Step 6: Build APK
+buildozer android debug
+
+# APK will be at:  ~/jarvis_android/bin/jarvis-1.0-debug.apk
+
+# Step 7: Copy APK back to Windows
+cp bin/*.apk /mnt/c/Users/YourName/Desktop/
+
+
+# ══ METHOD 3: Google Colab (free, browser only) ════════════════
+
+# Step 1: Go to colab.research.google.com
+# Step 2: Create a new notebook
+# Step 3: Upload your android/ folder to Colab files
+# Step 4: Run these cells one by one:
+
+# Cell 1:
+!sudo apt update
+!sudo apt install -y openjdk-17-jdk zip unzip
+
+# Cell 2:
+!pip install buildozer cython==0.29.37
+
+# Cell 3:
+%cd /content/android
+!buildozer android debug
+
+# Cell 4 (download APK):
+from google.colab import files
+import glob
+apk = glob.glob('bin/*.apk')[0]
+files.download(apk)
+
+
+# ───────────────────────────────────────────────────────────────
+#  SECTION 3 — QUICK REFERENCE
+# ───────────────────────────────────────────────────────────────
+
+# Check Python version
+python --version
+# Should be: Python 3.12.x
+
+# Check if venv is active (you will see (venv_jarvis) in terminal)
+where python
+
+# If pyaudio install fails on Windows:
+pip install pipwin
+pipwin install pyaudio
+
+# If vosk install fails:
+pip install vosk --pre
+
+# If playsound causes issues:
+pip install playsound==1.2.2
+
+# Clean and rebuild EXE from scratch:
+cd pc
+rmdir /s /q build dist
+pyinstaller jarvis.spec
+
+# Test Android main.py on PC before building APK:
+cd android
+python main.py

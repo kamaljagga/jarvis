@@ -1,0 +1,23 @@
+# ─────────────────────────────────────────
+#  J.A.R.V.I.S — Android Requirements
+#  Python 3.12 recommended
+#  Install: pip install -r requirements_android.txt
+#  NOTE: buildozer handles kivy + plyer inside APK
+#  These are only for local testing on PC
+# ─────────────────────────────────────────
+
+# UI framework
+kivy==2.3.0
+
+# Android hardware (PC testing only)
+plyer==2.1.0
+
+# Voice output fallback
+gTTS==2.5.1
+
+# Web / API
+requests==2.31.0
+
+# Build APK
+buildozer==1.5.0
+cython==0.29.37
