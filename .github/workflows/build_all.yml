@@ -70,10 +70,17 @@ jobs:
           sdkmanager "platform-tools" "build-tools;34.0.0" "platforms;android-34" "ndk;25.2.9519653"
           echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/25.2.9519653" >> $GITHUB_ENV
 
-      - name: Install Python packages
+-       name: Install Python packages
         run: |
           pip install --upgrade pip setuptools wheel
           pip install buildozer cython==0.29.37
+
+      - name: Inject API Keys
+        working-directory: android
+        # This creates api_secrets.py and writes your GitHub Secrets into it safely
+        run: |
+          echo "GROQ_API_KEY = '${{ secrets.GROQ_API_KEY }}'" > api_secrets.py
+          echo "GEMINI_API_KEY = '${{ secrets.GEMINI_API_KEY }}'" >> api_secrets.py
 
       - name: Cache buildozer
         uses: actions/cache@v4
@@ -82,7 +89,7 @@ jobs:
           key: buildozer-v3-${{ hashFiles('android/buildozer.spec') }}
           restore-keys: buildozer-v3-
 
-      - name: Build APK
+-       name: Build APK
         working-directory: android
         timeout-minutes: 45
         env:
@@ -91,7 +98,9 @@ jobs:
           ANDROIDNDK: ${{ env.ANDROID_NDK_HOME }}
           ANDROIDSDK: ${{ env.ANDROID_SDK_ROOT }}
           JAVA_HOME: ${{ env.JAVA_HOME }}
-        run: yes | buildozer -v android debug 2>&1
+        run: |
+          buildozer android clean
+          yes | buildozer -v android debug 2>&1
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

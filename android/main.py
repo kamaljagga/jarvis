@@ -7,7 +7,7 @@ from kivy.clock import Clock
 from jnius import autoclass, PythonJavaClass, java_method
 from android.permissions import request_permissions, Permission
 
-# --- IPC Receiver to catch signals from service.py ---
+# --- IPC Receiver for Animations ---
 class IPCReceiver(PythonJavaClass):
     __javainterfaces__ = ['android/content/BroadcastReceiver']
     def __init__(self, callback, **kwargs):
@@ -26,7 +26,6 @@ class SaraUI(MDScreen):
         super().__init__(**kwargs)
         self.md_bg_color = [0.05, 0.05, 0.05, 1]
 
-        # Siri-style Mic Button
         self.mic_btn = MDFloatingActionButton(
             icon="microphone",
             pos_hint={"center_x": 0.5, "center_y": 0.5},
@@ -83,24 +82,17 @@ class SaraApp(MDApp):
 
     def start_service(self, dt):
         try:
-            from jnius import autoclass
-            # 1. Get the current Android Activity
             mActivity = autoclass('org.kivy.android.PythonActivity').mActivity
             Intent = autoclass('android.content.Intent')
-            
-            # 2. Grab the specific Java class Buildozer generated for your service.
-            # It combines your package.domain + package.name + "Service" + Service Name
+            # Pointing exactly to the Service Buildozer generates
             ServiceClass = autoclass('com.yourname.sara.ServiceSara')
             
-            # 3. Create an Intent and start the foreground service
             intent = Intent(mActivity, ServiceClass)
             intent.putExtra("pythonServiceArgument", "")
-            
             mActivity.startForegroundService(intent)
-            self.ui.status.text = "Background Engine Running"
             
+            self.ui.status.text = "Background Engine Running"
         except Exception as e:
-            # If it fails, print the actual error to the screen so we can see it!
             self.ui.status.text = f"Boot Error: {e}"
             print(f"Service Boot Error: {e}")
 
@@ -110,8 +102,7 @@ class SaraApp(MDApp):
             PA = autoclass('org.kivy.android.PythonActivity')
             self.receiver = IPCReceiver(self.ui.trigger_animation)
             PA.mActivity.registerReceiver(self.receiver, IntentFilter("com.sara.ANIMATE"))
-        except Exception as e:
-            print(f"IPC Setup Error: {e}")
+        except: pass
 
 if __name__ == "__main__":
     SaraApp().run()
