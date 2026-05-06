@@ -338,10 +338,50 @@ def start_stt():
 
     start_listening_intent()
 
+# --- 6. FOREGROUND NOTIFICATION (Required by Android) ---
+def start_foreground():
+    try:
+        Context = autoclass('android.content.Context')
+        Service = autoclass('org.kivy.android.PythonService').mService
+        NB = autoclass('android.app.Notification$Builder')
+        NM = autoclass('android.app.NotificationManager')
+        NC = autoclass('android.app.NotificationChannel')
+
+        # Create Notification Channel
+        channel_id = "sara_bg"
+        ch = NC(channel_id, "S.A.R.A Background", NM.IMPORTANCE_LOW)
+        manager = Service.getSystemService(Context.NOTIFICATION_SERVICE)
+        manager.createNotificationChannel(ch)
+
+        # Get the app's default icon
+        app_info = Service.getApplicationInfo()
+        icon = app_info.icon
+
+        # Build the permanent notification
+        n = NB(Service, channel_id)\
+            .setContentTitle("S.A.R.A is Active")\
+            .setContentText("Listening for commands...")\
+            .setSmallIcon(icon)\
+            .setOngoing(True)\
+            .build()
+
+        # Start Foreground to prevent Android from killing the app
+        Service.startForeground(1, n)
+        print("[Foreground] Persistent Notification Started!")
+    except Exception as e: 
+        print(f"[Foreground] Error: {e}")
+
 if __name__ == '__main__':
     print("[SARA] Background Engine Booting...")
+    
+    # 1. Start the notification FIRST so Android doesn't kill us!
+    start_foreground() 
+    
+    # 2. Get WakeLock and start systems
     acquire_wakelock()
     threading.Thread(target=battery_monitor, daemon=True).start()
     start_stt()
     
+    # Keep alive
     while True: time.sleep(1)
+        
