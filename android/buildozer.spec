@@ -1,7 +1,7 @@
 [app]
 title = Sara Assistant
 package.name = sara
-package.domain = com.yourname.sara
+package.domain = com.yourname
 source.dir = .
 source.include_exts = py,png,jpg,kv,json
 version = 1.0
