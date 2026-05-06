@@ -31,13 +31,8 @@ SETTINGS_FILE = os.path.join(BASE_DIR, "settings.json")
 CONTACTS_FILE = os.path.join(BASE_DIR, "contacts.json")
 CACHE_FILE    = os.path.join(BASE_DIR, "cache.json")
 
-# Safely load API keys from the generated secrets file
-try:
-    from api_secrets import GROQ_API_KEY, GEMINI_API_KEY
-except ImportError:
-    print("[WARNING] api_secrets.py not found. Using placeholders.")
-    GROQ_API_KEY   = "YOUR_GROQ_API_KEY"
-    GEMINI_API_KEY = "YOUR_GEMINI_API_KEY"
+GROQ_API_KEY   = "YOUR_GROQ_API_KEY"
+GEMINI_API_KEY = "YOUR_GEMINI_API_KEY"
 
 DEFAULT_SETTINGS = {
     "language":"en","emotion":"friendly","sara_on":True,
@@ -270,4 +265,83 @@ def process_command(command):
 # --- 5. THE UNKILLABLE STT LOOP ---
 def extract_command(text):
     t=text.lower().strip()
-    for
+    for wake in WAKE_WORDS:
+        for pre in ["hey ","ok ","okay ","hi ",""]:
+            trigger=pre+wake
+            if t.startswith(trigger):
+                return True, text[len(trigger):].strip()
+    return False,""
+
+@run_on_ui_thread
+def start_stt():
+    global global_listener, speech_recognizer
+    
+    SpeechRecognizer = autoclass('android.speech.SpeechRecognizer')
+    RecognizerIntent = autoclass('android.speech.RecognizerIntent')
+    speech_recognizer = SpeechRecognizer.createSpeechRecognizer(Service)
+
+    class SaraListener(PythonJavaClass):
+        __javainterfaces__ = ['android/speech/RecognitionListener']
+
+        @java_method('([B)V')
+        def onBufferReceived(self, b): pass
+        @java_method('(ILandroid/os/Bundle;)V')
+        def onError(self, error, bundle):
+            send_ipc_animation_state("idle")
+            start_listening_intent()
+        @java_method('(Landroid/os/Bundle;)V')
+        def onReadyForSpeech(self, bundle): pass
+        @java_method('()V')
+        def onBeginningOfSpeech(self): pass
+        @java_method('(F)V')
+        def onRmsChanged(self, r): pass
+        @java_method('()V')
+        def onEndOfSpeech(self): pass
+
+        @java_method('(Landroid/os/Bundle;)V')
+        def onPartialResults(self, results):
+            try:
+                partial = results.getStringArrayList("android.speech.extra.PARTIAL_RESULTS")
+                if partial and partial.size() > 0:
+                    text = partial.get(0).lower()
+                    if any(w in text for w in WAKE_WORDS):
+                        send_ipc_animation_state("listening")
+            except: pass
+
+        @java_method('(Landroid/os/Bundle;)V')
+        def onEvent(self, e, p): pass
+
+        @java_method('(Landroid/os/Bundle;)V')
+        def onResults(self, results):
+            matches = results.getStringArrayList(RecognizerIntent.EXTRA_RESULTS)
+            if matches and matches.size() > 0:
+                text = matches.get(0)
+                print(f"[STT] {text}")
+                found, cmd = extract_command(text)
+                if found:
+                    threading.Thread(target=process_command, args=(cmd,), daemon=True).start()
+            
+            send_ipc_animation_state("idle")
+            start_listening_intent()
+
+    global_listener = SaraListener()
+    speech_recognizer.setRecognitionListener(global_listener)
+
+    def start_listening_intent():
+        if not S.get("sara_on",True): return
+        intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+        codes = get_lang_codes()
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, codes[0])
+        intent.putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES", codes[1:])
+        speech_recognizer.startListening(intent)
+
+    start_listening_intent()
+
+if __name__ == '__main__':
+    print("[SARA] Background Engine Booting...")
+    acquire_wakelock()
+    threading.Thread(target=battery_monitor, daemon=True).start()
+    start_stt()
+    
+    while True: time.sleep(1)
