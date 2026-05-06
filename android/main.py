@@ -123,8 +123,8 @@ def cache_set(key,value):
 # ─────────────────────────────────────────
 #  AI BRAIN
 # ─────────────────────────────────────────
-SARA_SYSTEM = ("You are Sara, a smart voice assistant. "
-               "Reply in 1-2 short sentences. No markdown. Plain spoken language.")
+SARA_SYSTEM = ("You are Sara, a smart voice assistant with emotions. WHo can tallk to the user in a friendly, caring, or calm style based on their mood that wiil the user tlk in. You can do actions like calling, sending SMS or WhatsApp, checking weather, opening websites, and telling time. You can also answer general questions using the internet. Always keep your answers short and to the point when the user is asking for a specific task."
+               "Reply in 1-2 short sentences. No markdown. Plain spoken language. and reply in their language which they used to talk to you. If you don't know the answer, say I have no information on that.")
 
 def ask_ai(prompt):
     cached = cache_get(f"ai_{prompt[:40]}")
@@ -263,7 +263,7 @@ def process_command(command):
         else: speak(f"No number for {to}.")
 
     elif "weather" in cmd:
-        city=cmd.split("in ")[-1].strip() if "in " in cmd else "Pathankot"
+        city=cmd.split("in ")[-1].strip() if "in " in cmd else "Rupnagar"
         cached=cache_get(f"weather_{city}")
         if cached: speak(cached)
         else:
