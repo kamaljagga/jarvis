@@ -3,21 +3,25 @@ title = Sara Assistant
 package.name = sara
 package.domain = com.yourname.sara
 source.dir = .
-source.include_exts = py,png,jpg,kv,atlas,json
+source.include_exts = py,png,jpg,kv,json
 version = 1.0
-requirements = python3,kivy==2.3.0,plyer,requests,gtts,certifi,urllib3,charset-normalizer,idna,openssl,android
+
+# Added kivymd, jnius, and backend libs
+requirements = python3,kivy==2.3.0,kivymd,jnius,plyer,requests,gtts,certifi,urllib3,charset-normalizer,idna,openssl,android
+
 orientation = portrait
 fullscreen = 1
-android.permissions = INTERNET,RECORD_AUDIO,SEND_SMS,CALL_PHONE,READ_CONTACTS,WRITE_CONTACTS,READ_PHONE_STATE,RECEIVE_BOOT_COMPLETED,WAKE_LOCK,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MICROPHONE
+
+# Extensive permissions for hardware and background services
+android.permissions = INTERNET,RECORD_AUDIO,CAMERA,SET_ALARM,BLUETOOTH,BLUETOOTH_CONNECT,WAKE_LOCK,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MICROPHONE,READ_CONTACTS,CALL_PHONE,SEND_SMS
+
 android.api = 34
-android.minapi = 21
+android.minapi = 24
 android.ndk = 25b
 android.archs = arm64-v8a, armeabi-v7a
 android.allow_backup = True
 
-# Boot receiver — auto starts Sara when phone boots
-android.manifest.application_arguments = --launch-app
+# Define the background service (Name: filename: foreground: type)
+services = sara:service.py:foreground:microphone
 
-[buildozer]
-log_level = 2
-warn_on_root = 1
+android.manifest.application_arguments = --launch-app
