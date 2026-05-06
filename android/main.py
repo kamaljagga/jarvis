@@ -83,11 +83,25 @@ class SaraApp(MDApp):
 
     def start_service(self, dt):
         try:
-            Service = autoclass('org.kivy.android.PythonService')
-            # "sara" matches the services declaration in buildozer.spec
-            Service.mService.startForegroundService()
+            from jnius import autoclass
+            # 1. Get the current Android Activity
+            mActivity = autoclass('org.kivy.android.PythonActivity').mActivity
+            Intent = autoclass('android.content.Intent')
+            
+            # 2. Grab the specific Java class Buildozer generated for your service.
+            # It combines your package.domain + package.name + "Service" + Service Name
+            ServiceClass = autoclass('com.yourname.sara.ServiceSara')
+            
+            # 3. Create an Intent and start the foreground service
+            intent = Intent(mActivity, ServiceClass)
+            intent.putExtra("pythonServiceArgument", "")
+            
+            mActivity.startForegroundService(intent)
             self.ui.status.text = "Background Engine Running"
+            
         except Exception as e:
+            # If it fails, print the actual error to the screen so we can see it!
+            self.ui.status.text = f"Boot Error: {e}"
             print(f"Service Boot Error: {e}")
 
     def setup_ipc(self):
