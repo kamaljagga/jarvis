@@ -86,8 +86,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.buildozer
-          key: buildozer-v3-${{ hashFiles('android/buildozer.spec') }}
-          restore-keys: buildozer-v3-
+          key: buildozer-v4-${{ hashFiles('android/buildozer.spec') }}
+          restore-keys: buildozer-v4-
 
       - name: Build APK
         working-directory: android
@@ -98,9 +98,8 @@ jobs:
           ANDROIDNDK: ${{ env.ANDROID_NDK_HOME }}
           ANDROIDSDK: ${{ env.ANDROID_SDK_ROOT }}
           JAVA_HOME: ${{ env.JAVA_HOME }}
-        run: |
-          buildozer android clean
-          yes | buildozer -v android debug 2>&1
+        run: yes | buildozer -v android debug 2>&1
+          
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
