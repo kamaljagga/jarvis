@@ -1,6 +1,6 @@
 [app]
-title = J.A.R.V.I.S
-package.name = jarvis
+title = T.A.R.A
+package.name = tara
 package.domain = com.yourname.jarvis
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,json

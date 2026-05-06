@@ -1,6 +1,6 @@
 # ═══════════════════════════════════════════════════════════════════
-#  J.A.R.V.I.S — ANDROID VERSION
-#  🎙 ONE-SHOT COMMANDS: "Jarvis call mom"  (not "Jarvis" → yes → "call mom")
+#  T.A.R.A — ANDROID VERSION
+#  🎙 ONE-SHOT COMMANDS: "Tara call mom"  (not "Tara" → yes → "call mom")
 #  📱 Android SpeechRecognizer via Pyjnius
 #  🌍 Auto language: EN / HI / PA
 #  😊 Auto emotion detection
@@ -112,10 +112,10 @@ def cache_clear():
 #  How Siri saves battery:
 #  ┌─────────────────────────────────────────┐
 #  │ ALWAYS ON (tiny DSP chip, ~1% battery)  │
-#  │  → listens ONLY for "Jarvis" keyword    │
+#  │  → listens ONLY for "Tara" keyword    │
 #  │  → CPU stays ASLEEP                     │
 #  └─────────────────────────────────────────┘
-#           ↓ "Jarvis" detected
+#           ↓ "Tara" detected
 #  ┌─────────────────────────────────────────┐
 #  │ WAKES UP (full STT, ~5 sec, 3% battery) │
 #  │  → records + transcribes command        │
@@ -128,7 +128,7 @@ def cache_clear():
 #
 #  Android implementation:
 #  - Use SpeechRecognizer with PARTIAL results
-#    to detect "jarvis" in partial text fast.
+#    to detect "tara" in partial text fast.
 #  - Stop full recognition as soon as command ends.
 #  - Screen OFF → pause listening (saves battery).
 #  - Screen ON  → resume listening.
@@ -342,12 +342,12 @@ def time_greeting():
 #
 #  HOW IT WORKS:
 #  SpeechRecognizer runs ALWAYS in background.
-#  Every result is checked for "jarvis" at start.
-#  If found → everything AFTER "jarvis" is the command.
+#  Every result is checked for "tara" at start.
+#  If found → everything AFTER "tara" is the command.
 #
-#  "Jarvis call mom"         → command = "call mom"
+#  "Tara call mom"         → command = "call mom"
 #  "Jarvis what time is it"  → command = "what time is it"
-#  "Jarvis kya time hai"     → command = "kya time hai" (Hindi auto-detected)
+#  "Tara kya time hai"     → command = "kya time hai" (Hindi auto-detected)
 #  "Jarvis send SMS to dad saying hello" → full command
 #
 #  No two-step needed. One sentence = wake + command.
@@ -355,7 +355,7 @@ def time_greeting():
 
 # All variations of wake word across languages
 WAKE_WORDS = [
-    "jarvis","jarwis","jarvis","jaarvis",    # English variations (STT noise)
+    "tara","jarwis","tara","jaarvis",    # English variations (STT noise)
     "\u091c\u093e\u0930\u094d\u0935\u093f\u0938",  # jarvis in Hindi unicode
     "\u0a1c\u0a3e\u0a30\u0a35\u0a3f\u0a38",        # jarvis in Punjabi unicode
 ]
@@ -368,7 +368,7 @@ def extract_command(full_text):
     Examples:
       "jarvis call mom"              → (True, "call mom")
       "hey jarvis open youtube"      → (True, "open youtube")
-      "jarvis"                       → (True, "")   ← just wake, no command
+      "tara"                       → (True, "")   ← just wake, no command
       "play music"                   → (False, "")
     """
     text_lower = full_text.lower().strip()
@@ -440,7 +440,7 @@ def process_command(command, ui_callback=None):
     ui_callback(text) updates the UI label if provided.
     """
     if not command:
-        # Just "Jarvis" with no command — greet
+        # Just "Tara" with no command — greet
         reply = r("greet")
         speak(reply)
         if ui_callback: ui_callback(reply)
@@ -656,7 +656,7 @@ speech_recognizer_instance = None
 def start_continuous_listening(ui_callback=None):
     """
     Start Android SpeechRecognizer in a loop.
-    Each result is checked for 'Jarvis' wake word.
+    Each result is checked for 'Tara' wake word.
     Command is extracted inline from the same sentence.
     """
     try:
@@ -732,6 +732,7 @@ def start_continuous_listening(ui_callback=None):
         def restart_listening():
             global speech_recognizer_instance
             try:
+                # Indian locale codes for better accent recognition
                 lang_map = {"en":"en-IN","hi":"hi-IN","pa":"pa-IN"}
                 lang_tag = lang_map.get(S.get("language","en"), "en-IN")
 
@@ -739,6 +740,8 @@ def start_continuous_listening(ui_callback=None):
                 intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                                 RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, lang_tag)
+                intent.putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES",
+                                ["en-IN","hi-IN","pa-IN"])  # multi-language support
                 intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, True)
 
                 if speech_recognizer_instance:
@@ -779,7 +782,7 @@ class MainScreen(Screen):
 
         # Header
         header = BoxLayout(size_hint_y=None, height=dp(56), spacing=dp(8))
-        header.add_widget(Label(text="J.A.R.V.I.S", font_size=dp(22),
+        header.add_widget(Label(text="T.A.R.A", font_size=dp(22),
                                 color=WHITE, bold=True, size_hint_x=0.55))
         self.status_dot = Label(text="● online", font_size=dp(13),
                                 color=TEAL, size_hint_x=0.25)
@@ -802,7 +805,7 @@ class MainScreen(Screen):
 
         # Mic button (always-on listening indicator)
         self.mic_btn = Button(
-            text="🎙 ALWAYS LISTENING\nSay: Jarvis [command]",
+            text="🎙 ALWAYS LISTENING\nSay: Tara [command]",
             font_size=dp(16), size_hint_y=None, height=dp(130),
             background_color=TEAL, color=WHITE, bold=True)
         self.mic_btn.bind(on_press=self.on_mic_press)
@@ -810,7 +813,7 @@ class MainScreen(Screen):
 
         # Example commands
         examples = Label(
-            text='Examples:\n"Jarvis call mom"\n"Jarvis weather in Delhi"\n"Jarvis kya time hai"',
+            text='Examples:\n"Tara call mom"\n"Tara weather in Delhi"\n"Tara kya time hai"',
             font_size=dp(13), color=get_color_from_hex("#7fb5a0"),
             size_hint_y=None, height=dp(80), halign='center')
         examples.bind(size=examples.setter('text_size'))
@@ -919,7 +922,7 @@ class SettingsScreen(Screen):
         save_settings(S)
         if val:
             acquire_wakelock()
-            speak("Jarvis will now listen on locked screen.")
+            speak("Tara will now listen on locked screen.")
         else:
             release_wakelock()
             speak("Lock screen listening disabled.")

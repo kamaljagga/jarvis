@@ -193,7 +193,7 @@ def speak(text):
 # ─────────────────────────────────────────
 #  🔒 VOSK — OFFLINE WAKE WORD (privacy core)
 #  Nothing ever sent to internet for wake word.
-#  Data only leaves your PC AFTER "Jarvis" is heard.
+#  Data only leaves your PC AFTER "Tara" is heard.
 # ─────────────────────────────────────────
 VOSK_MODEL     = None
 vosk_available = False
@@ -270,14 +270,59 @@ def recognize_vosk(audio_data):
         return ""
 
 r_google = sr.Recognizer()
+r_google.pause_threshold  = 1.0   # wait 1 sec of silence before stopping
+r_google.energy_threshold = 300   # mic sensitivity
+r_google.dynamic_energy_threshold = True
 
-def recognize_google(audio_data):
-    """Used ONLY for commands after wake word."""
+# ─────────────────────────────────────────
+#  🌍 MULTI-LANGUAGE STT
+#  Tries Indian English first (fastest)
+#  If fails → tries Hindi → tries Punjabi
+#  This way it ALWAYS understands you
+# ─────────────────────────────────────────
+LANG_CODES = [
+    ("en-IN", "Indian English"),
+    ("hi-IN", "Hindi"),
+    ("pa-IN", "Punjabi"),
+]
+
+def recognize_google(audio_data, lang=None):
+    """
+    Try recognition in multiple Indian languages.
+    Falls back through en-IN → hi-IN → pa-IN until one works.
+    """
+    log_privacy("Command audio sent to Google STT (command only)")
+    
+    # If language already detected — try that first
+    current_lang = S.get("language","en")
+    lang_priority = {
+        "en": ["en-IN","hi-IN","pa-IN"],
+        "hi": ["hi-IN","en-IN","pa-IN"],
+        "pa": ["pa-IN","hi-IN","en-IN"],
+    }.get(current_lang, ["en-IN","hi-IN","pa-IN"])
+
+    for lang_code in lang_priority:
+        try:
+            text = r_google.recognize_google(audio_data, language=lang_code)
+            if text:
+                log_privacy(f"STT ({lang_code}): '{text}' — closed")
+                print(f"[STT] ({lang_code}): {text}")
+                return text
+        except sr.UnknownValueError:
+            continue   # try next language
+        except sr.RequestError:
+            speak("Internet not available for speech recognition.")
+            return ""
+        except Exception:
+            continue
+    return ""
+
+def recognize_google_noise(audio_data):
+    """Wake word recognition — fast, Indian English only."""
     try:
-        log_privacy("Command audio sent to Google STT (command only, not continuous)")
-        text = r_google.recognize_google(audio_data)
-        log_privacy(f"Google STT returned: '{text}' — connection closed")
-        return text
+        # Adjust for ambient noise is done at listen time
+        text = r_google.recognize_google(audio_data, language="en-IN")
+        return text.lower()
     except Exception:
         return ""
 
@@ -285,18 +330,85 @@ def recognize_google(audio_data):
 #  🎙 SMART MIC
 # ─────────────────────────────────────────
 def listen_audio(duration=2.0, fs=16000):
+    """Short listen for wake word detection."""
     recording = sd.rec(int(duration * fs), samplerate=fs, channels=1, dtype='int16')
     sd.wait()
     return sr.AudioData(recording.tobytes(), fs, 2)
 
+def listen_command_sr(lang_codes=None):
+    """
+    Better listening using SpeechRecognition Microphone directly.
+    Uses adjust_for_ambient_noise to filter background noise.
+    Tries multiple Indian language codes for best accuracy.
+    """
+    if lang_codes is None:
+        current = S.get("language","en")
+        lang_codes = {
+            "en": ["en-IN","hi-IN","pa-IN"],
+            "hi": ["hi-IN","en-IN","pa-IN"],
+            "pa": ["pa-IN","hi-IN","en-IN"],
+        }.get(current, ["en-IN","hi-IN","pa-IN"])
+
+    recognizer = sr.Recognizer()
+    recognizer.pause_threshold         = 1.0   # wait 1 sec silence
+    recognizer.dynamic_energy_threshold = True  # auto-adjust to mic
+
+    try:
+        with sr.Microphone() as source:
+            print("[Mic] Adjusting for background noise...")
+            recognizer.adjust_for_ambient_noise(source, duration=0.5)
+            print(f"[Mic] Listening... (energy threshold: {recognizer.energy_threshold:.0f})")
+            audio = recognizer.listen(source, timeout=6, phrase_time_limit=8)
+
+        # Try each language code until one works
+        for lang_code in lang_codes:
+            try:
+                text = recognizer.recognize_google(audio, language=lang_code)
+                if text:
+                    print(f"[STT] ({lang_code}): {text}")
+                    log_privacy(f"STT sent to Google ({lang_code}): '{text}' — closed")
+                    return text
+            except sr.UnknownValueError:
+                continue
+            except sr.RequestError:
+                speak("Internet not available.")
+                return ""
+        return ""
+    except sr.WaitTimeoutError:
+        return ""
+    except Exception as e:
+        print(f"[Mic] Error: {e}")
+        return ""
+
 def listen_smart(timeout=6, phrase_limit=8, fs=16000):
-    CHUNK = 1024; THRESHOLD = 600; SILENCE_SEC = 1.5
+    """
+    Smart listener with:
+    - Ambient noise adjustment (ignores fan/traffic)
+    - Dynamic threshold (adapts to your mic)
+    - Longer silence wait for Indian speech patterns
+    """
+    CHUNK = 1024; SILENCE_SEC = 1.8   # slightly longer for Indian speech rhythm
     waited = 0; speaking = False; silent_chunks = 0; frames = []
+    
+    # Dynamic threshold — starts at 500, adapts
+    THRESHOLD     = 500
     wait_limit    = int(timeout * fs / CHUNK)
     silence_limit = int(SILENCE_SEC * fs / CHUNK)
+    
     stream = sd.InputStream(samplerate=fs, channels=1, dtype='int16', blocksize=CHUNK)
     stream.start()
     print("Listening (speak now)...")
+    
+    # Calibrate noise for first 0.5 seconds
+    noise_frames = []
+    for _ in range(int(0.5 * fs / CHUNK)):
+        chunk, _ = stream.read(CHUNK)
+        noise_frames.append(np.abs(chunk).mean())
+    if noise_frames:
+        avg_noise = sum(noise_frames) / len(noise_frames)
+        THRESHOLD = max(500, avg_noise * 2.5)   # dynamic threshold
+        print(f"[Mic] Noise level: {avg_noise:.0f} → threshold: {THRESHOLD:.0f}")
+    
     try:
         while True:
             chunk, _ = stream.read(CHUNK)
@@ -889,9 +1001,9 @@ def ask_gemini(prompt):
 #  + Groq AI for confirmation on ambiguous text.
 # ─────────────────────────────────────────
 HINDI_MARKERS  = ["kya","hai","karo","bolo","batao","mujhe","aaj","kal","theek","haan",
-                  "nahi","kyun","kaise","abhi","yahan","wahan","mera","tera","jarvis"]
+                  "nahi","kyun","kaise","abhi","yahan","wahan","mera","tera","tara"]
 PUNJABI_MARKERS= ["ki","hega","karو","dasso","ki karna","sat sri","wahe","oye","tusi",
-                  "menu","tera","sada","eh","oh","koi","nahi","haan","jarvis"]
+                  "menu","tera","sada","eh","oh","koi","nahi","haan","tara"]
 
 def detect_language(text):
     """Detect language from spoken text. Returns: en / hi / pa"""
@@ -1115,6 +1227,10 @@ def processCommand(c):
             speak("Nothing has been sent to any server in this session.")
 
     # ── Help ──────────────────────────────────────────────────────────
+    elif "remove from startup" in cmd or "don't start automatically" in cmd:
+        remove_from_startup()
+        speak("Okay! I will not start automatically anymore.")
+
     elif "what can you do" in cmd or "help" in cmd or "commands" in cmd:
         speak("I can: play music, check weather, send SMS and WhatsApp, "
               "make WhatsApp calls, control volume, shutdown or lock your PC, "
@@ -1133,16 +1249,50 @@ def processCommand(c):
 # ─────────────────────────────────────────
 #  🚀 MAIN LOOP
 # ─────────────────────────────────────────
+def add_to_startup():
+    """
+    Add Tara to Windows startup so she runs automatically
+    when PC boots — just like Siri on Mac.
+    Works silently in background after first run.
+    """
+    try:
+        import winreg
+        key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+        exe_path = sys.executable if not getattr(sys,'frozen',False) else sys.executable
+        script   = os.path.abspath(__file__)
+        cmd      = f'"{exe_path}" "{script}"' if not getattr(sys,'frozen',False) else f'"{exe_path}"'
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE)
+        winreg.SetValueEx(key, "Tara", 0, winreg.REG_SZ, cmd)
+        winreg.CloseKey(key)
+        print("[Startup] Tara added to Windows startup ✅")
+    except Exception as e:
+        print(f"[Startup] Could not add to startup: {e}")
+
+def remove_from_startup():
+    """Remove Tara from Windows startup."""
+    try:
+        import winreg
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                             r"Software\Microsoft\Windows\CurrentVersion\Run",
+                             0, winreg.KEY_SET_VALUE)
+        winreg.DeleteValue(key, "Tara")
+        winreg.CloseKey(key)
+        print("[Startup] Tara removed from startup")
+    except: pass
+
 if __name__ == "__main__":
-    speak("Initializing Jarvis. Ultimate version loading.")
+    speak("Initializing Tara. Ultimate version loading.")
     load_vosk()
+
+    # Register to start automatically on Windows boot (like Siri)
+    add_to_startup()
 
     if not os.path.exists(APPS_FILE):
         speak("First time setup. Scanning your apps.")
         scan_installed_apps()
 
     print("\n" + "═"*62)
-    print("  J.A.R.V.I.S — ULTIMATE VERSION")
+    print("  T.A.R.A — ULTIMATE VERSION")
     print("═"*62)
     print(f"  🔒 Wake word  : {'Vosk OFFLINE (private ✅)' if vosk_available else 'Google STT (install Vosk for privacy)'}")
     print("  🎙 Commands   : Google STT (only sent after wake word)")
@@ -1159,7 +1309,7 @@ if __name__ == "__main__":
     print("  📝 Reminders  : Time-based voice reminders")
     print("  📋 Clipboard  : Read & copy text by voice")
     print("═"*62)
-    print("\n🎤  Say 'Jarvis' to activate — then give your command")
+    print("\n🎤  Say 'Tara' to activate — then give your command")
     print("⌨️  Keyboard: Space=Play/Pause | Shift+N=Next | Shift+P=Prev")
     print("\n📋 Example Commands:")
     print("  play arijit singh            | open chrome")
@@ -1188,7 +1338,7 @@ if __name__ == "__main__":
 
             print("Heard:", word)
 
-            if "jarvis" in word.lower():
+            if "tara" in word.lower():
                 speak(r("greet"))
 
                 # ── STEP 2: Record command ─────────────────────────────
