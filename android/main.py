@@ -1,194 +1,25 @@
-# ═══════════════════════════════════════════════════════════════════
-#  T.A.R.A — ANDROID VERSION
-#  🎙 ONE-SHOT COMMANDS: "Tara call mom"  (not "Tara" → yes → "call mom")
-#  📱 Android SpeechRecognizer via Pyjnius
-#  🌍 Auto language: EN / HI / PA
-#  😊 Auto emotion detection
-#  🤖 AI Brain: Groq + Gemini
-# ═══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+#  S.A.R.A — Smart Assistant with Real-time Audio
+#  NO UI — runs completely in background like Siri
+#  Auto-starts on phone boot
+#  Uses Android built-in speech engine (best accuracy)
+#  All Indian accents: en-IN, hi-IN, pa-IN + more
+# ═══════════════════════════════════════════════════════════════
 
-import os, json, re, time, random, datetime, threading, requests, hashlib
+import os, json, re, time, random, datetime, threading, requests
 
-from kivy.app import App
-from kivy.uix.screenmanager import ScreenManager, Screen, FadeTransition
-from kivy.uix.boxlayout import BoxLayout
-from kivy.uix.gridlayout import GridLayout
-from kivy.uix.scrollview import ScrollView
-from kivy.uix.label import Label
-from kivy.uix.button import Button
-from kivy.uix.switch import Switch
-from kivy.uix.spinner import Spinner
-from kivy.clock import Clock
-from kivy.core.window import Window
-from kivy.utils import get_color_from_hex
-from kivy.metrics import dp
-
-try:
-    from plyer import tts as android_tts
-    from plyer import battery as android_battery
-    PLYER_OK = True
-except ImportError:
-    PLYER_OK = False
-
-try:
-    from gtts import gTTS
-    GTTS_OK = True
-except ImportError:
-    GTTS_OK = False
-
-# ─────────────────────────────────────────
-#  PATHS & SETTINGS
-# ─────────────────────────────────────────
 BASE_DIR      = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_FILE = os.path.join(BASE_DIR, "settings.json")
 CONTACTS_FILE = os.path.join(BASE_DIR, "contacts.json")
-CACHE_FILE    = os.path.join(BASE_DIR, "cache.json")   # persists across sessions
-
-# ─────────────────────────────────────────
-#  💾 SMART CACHE
-#  Saves searches to cache.json so they
-#  survive app restarts.
-#  Auto-expires entries older than 7 days.
-#  Max 200 entries (oldest removed first).
-# ─────────────────────────────────────────
-CACHE_MAX_ENTRIES = 200
-CACHE_EXPIRE_DAYS = 7
-
-def load_cache():
-    if os.path.exists(CACHE_FILE):
-        try:
-            with open(CACHE_FILE) as f:
-                data = json.load(f)
-            # Remove expired entries
-            now  = datetime.datetime.now().timestamp()
-            data = {k:v for k,v in data.items()
-                    if now - v.get("ts", 0) < CACHE_EXPIRE_DAYS * 86400}
-            return data
-        except: pass
-    return {}
-
-def save_cache(data):
-    try:
-        # Keep only newest CACHE_MAX_ENTRIES
-        if len(data) > CACHE_MAX_ENTRIES:
-            sorted_keys = sorted(data, key=lambda k: data[k].get("ts",0))
-            for k in sorted_keys[:len(data)-CACHE_MAX_ENTRIES]:
-                del data[k]
-        with open(CACHE_FILE,"w") as f:
-            json.dump(data, f, indent=2)
-    except Exception as e:
-        print(f"[Cache] Save error: {e}")
-
-def cache_get(key):
-    """Get a cached value. Returns None if not found or expired."""
-    data = load_cache()
-    entry = data.get(key)
-    if entry:
-        age = datetime.datetime.now().timestamp() - entry.get("ts",0)
-        if age < CACHE_EXPIRE_DAYS * 86400:
-            print(f"[Cache] HIT: {key}")
-            return entry.get("value")
-    return None
-
-def cache_set(key, value):
-    """Save a value to cache with current timestamp."""
-    data = load_cache()
-    data[key] = {"value": value, "ts": datetime.datetime.now().timestamp()}
-    save_cache(data)
-    print(f"[Cache] SAVED: {key}")
-
-def cache_clear():
-    """Wipe the entire cache."""
-    if os.path.exists(CACHE_FILE):
-        os.remove(CACHE_FILE)
-    print("[Cache] Cleared")
-
-# ─────────────────────────────────────────
-#  🔋 BATTERY-FRIENDLY LISTENING
-#  Like Siri/Google Assistant — uses Android
-#  hotword detection (very low power) instead
-#  of running full STT all the time.
-#
-#  How Siri saves battery:
-#  ┌─────────────────────────────────────────┐
-#  │ ALWAYS ON (tiny DSP chip, ~1% battery)  │
-#  │  → listens ONLY for "Tara" keyword    │
-#  │  → CPU stays ASLEEP                     │
-#  └─────────────────────────────────────────┘
-#           ↓ "Tara" detected
-#  ┌─────────────────────────────────────────┐
-#  │ WAKES UP (full STT, ~5 sec, 3% battery) │
-#  │  → records + transcribes command        │
-#  │  → processes + replies                  │
-#  └─────────────────────────────────────────┘
-#           ↓ done
-#  ┌─────────────────────────────────────────┐
-#  │ BACK TO SLEEP (DSP only)                │
-#  └─────────────────────────────────────────┘
-#
-#  Android implementation:
-#  - Use SpeechRecognizer with PARTIAL results
-#    to detect "tara" in partial text fast.
-#  - Stop full recognition as soon as command ends.
-#  - Screen OFF → pause listening (saves battery).
-#  - Screen ON  → resume listening.
-# ─────────────────────────────────────────
-_listening_active   = True
-_screen_on          = True   # screen display ON/OFF
-_screen_locked      = False  # screen LOCKED (still works when locked!)
-_last_command_time  = 0
-COMMAND_COOLDOWN    = 1.5
-
-# ─────────────────────────────────────────
-#  🔒 LOCKED vs OFF — key difference:
-#
-#  Screen LOCKED  → Jarvis STILL listens ✅
-#  Screen OFF     → Jarvis pauses (saves battery)
-#
-#  Just like Siri — responds to "Hey Siri"
-#  even when phone is locked, but not when
-#  screen is completely off (display black).
-#
-#  WakeLock keeps CPU alive during listening
-#  so Android doesn't kill the process.
-# ─────────────────────────────────────────
-_wakelock = None   # holds Android WakeLock reference
-
-def acquire_wakelock():
-    """Keep CPU running so STT works in background/locked."""
-    global _wakelock
-    try:
-        from jnius import autoclass
-        PowerManager  = autoclass('android.os.PowerManager')
-        PythonActivity = autoclass('org.kivy.android.PythonActivity')
-        pm = PythonActivity.mActivity.getSystemService(
-            PythonActivity.mActivity.POWER_SERVICE)
-        _wakelock = pm.newWakeLock(
-            PowerManager.PARTIAL_WAKE_LOCK,   # CPU on, screen can be off
-            'Jarvis:ListeningWakeLock')
-        _wakelock.acquire()
-        print("[WakeLock] Acquired — CPU will stay on")
-    except Exception as e:
-        print(f"[WakeLock] Not available: {e}")
-
-def release_wakelock():
-    global _wakelock
-    try:
-        if _wakelock and _wakelock.isHeld():
-            _wakelock.release()
-            print("[WakeLock] Released")
-    except Exception as e:
-        print(f"[WakeLock] Release error: {e}")
-
+CACHE_FILE    = os.path.join(BASE_DIR, "cache.json")
 
 GROQ_API_KEY   = "YOUR_GROQ_API_KEY"
 GEMINI_API_KEY = "YOUR_GEMINI_API_KEY"
 
 DEFAULT_SETTINGS = {
-    "language":"en","emotion":"friendly","jarvis_on":True,
+    "language":"en","emotion":"friendly","sara_on":True,
     "features":{"sms":True,"whatsapp":True,"calls":True,
-                "weather":True,"news":True,"ai":True,"reminder":True,
-                "lock_screen_listen":True},
+                "weather":True,"ai":True},
     "battery":{"full_alert":True,"low_alert":True}
 }
 
@@ -204,827 +35,481 @@ def load_settings():
     json.dump(DEFAULT_SETTINGS, open(SETTINGS_FILE,"w"), indent=2)
     return DEFAULT_SETTINGS.copy()
 
-def save_settings(s):
-    json.dump(s, open(SETTINGS_FILE,"w"), indent=2)
-
+def save_settings(s): json.dump(s, open(SETTINGS_FILE,"w"), indent=2)
 S = load_settings()
-def feature_on(n): return S["features"].get(n,True) and S.get("jarvis_on",True)
+def feature_on(n): return S["features"].get(n,True) and S.get("sara_on",True)
 
 # ─────────────────────────────────────────
-#  🗣 SPEAK
+#  WAKE WORDS — Sara + all variations
+# ─────────────────────────────────────────
+WAKE_WORDS = [
+    "sara","sarah","saara","sarra",
+    "hey sara","ok sara","okay sara","hi sara",
+    "hey sarah","ok sarah",
+    "\u0938\u093e\u0930\u093e",
+    "\u0a38\u0a3e\u0a30\u0a3e",
+    "zara","tara","siri","zero","sar",
+    "sara ji","sarah ji",
+]
+
+# All Indian + global accent codes
+LANG_CODES = {
+    "en": ["en-IN","en-US","en-GB","en-AU"],
+    "hi": ["hi-IN","en-IN"],
+    "pa": ["pa-IN","hi-IN","en-IN"],
+}
+
+def get_lang_codes():
+    return LANG_CODES.get(S.get("language","en"), LANG_CODES["en"])
+
+# ─────────────────────────────────────────
+#  SPEAK
 # ─────────────────────────────────────────
 def speak(text):
-    print(f"[Jarvis] {text}")
+    print(f"[Sara] {text}")
     try:
-        if PLYER_OK:
-            android_tts.speak(text); return
-        if GTTS_OK:
-            lang_code = {"en":"en","hi":"hi","pa":"pa"}.get(S.get("language","en"),"en")
-            tts = gTTS(text, lang=lang_code)
-            tts.save("/tmp/j.mp3")
-            os.system("am start -a android.intent.action.VIEW -d file:///tmp/j.mp3")
+        from plyer import tts
+        tts.speak(text)
     except Exception as e:
         print(f"[TTS] {e}")
 
 # ─────────────────────────────────────────
-#  🌍 LANGUAGE + EMOTION AUTO DETECT
+#  AUTO DETECT LANGUAGE + EMOTION
 # ─────────────────────────────────────────
-HINDI_MARKERS   = ["kya","hai","karo","bolo","batao","mujhe","haan","nahi","yahan","mera"]
-PUNJABI_MARKERS = ["ki","hega","dasso","oye","tusi","menu","sada","eh","haan"]
-
-def detect_language(text):
-    t = text.lower()
-    if any('\u0900'<=c<='\u097f' for c in text): return "hi"
-    if any('\u0a00'<=c<='\u0a7f' for c in text): return "pa"
-    words = t.split()
-    hi = sum(1 for w in words if w in HINDI_MARKERS)
-    pa = sum(1 for w in words if w in PUNJABI_MARKERS)
-    if pa > hi and pa >= 2: return "pa"
-    if hi >= 2: return "hi"
-    return "en"
-
-EMOTION_WORDS = {
-    "happy":   ["happy","great","awesome","excited","wonderful","amazing","love"],
-    "sad":     ["sad","upset","crying","depressed","unhappy","lonely","hurt"],
-    "angry":   ["angry","frustrated","annoying","hate","worst","useless","mad"],
-    "stressed":["busy","tired","exhausted","stressed","deadline","hurry","urgent"],
-    "calm":    ["okay","fine","normal","alright","sure","please","thanks"],
+HINDI_W   = ["kya","hai","karo","bolo","batao","mujhe","haan","nahi"]
+PUNJABI_W = ["ki","hega","dasso","oye","tusi","menu","sada","eh"]
+EMOTIONS  = {
+    "happy":["happy","great","awesome","excited","wonderful"],
+    "sad":["sad","upset","crying","unhappy","lonely"],
+    "angry":["angry","frustrated","hate","worst","mad"],
+    "stressed":["busy","tired","exhausted","stressed","urgent"],
+    "calm":["okay","fine","alright","sure","thanks"],
 }
-JARVIS_FOR_EMOTION = {"happy":"friendly","sad":"caring","angry":"calm","stressed":"calm","calm":"friendly"}
-
-def detect_emotion(text):
-    t = text.lower()
-    scores = {e: sum(1 for w in EMOTION_WORDS[e] if w in t) for e in EMOTION_WORDS}
-    best = max(scores, key=scores.get)
-    return best if scores[best] > 0 else "calm"
+EMO_TO_STYLE = {"happy":"friendly","sad":"caring","angry":"calm",
+                "stressed":"calm","calm":"friendly"}
 
 def auto_detect(text):
-    """Auto-set language and emotion from spoken text."""
-    lang = detect_language(text)
-    if lang != S.get("language","en"):
-        S["language"] = lang; save_settings(S)
-
-    emo = JARVIS_FOR_EMOTION.get(detect_emotion(text), "friendly")
-    if emo != S.get("emotion","friendly"):
-        S["emotion"] = emo; save_settings(S)
-
-# ─────────────────────────────────────────
-#  MULTILINGUAL RESPONSES
-# ─────────────────────────────────────────
-RESP = {
-  "en":{
-    "greet":{
-        "friendly":["What can I do for you?","How can I help?"],
-        "formal":  ["How may I assist you?","State your request."],
-        "funny":   ["At your service, boss!","What do you need?"],
-        "caring":  ["I'm here! What do you need?","How can I help you?"],
-        "calm":    ["I'm listening.","Ready."],
-    },
-    "listening":"Listening...",
-    "not_understood":"Sorry, say that again?",
-    "feature_off":"That feature is off. Check settings.",
-    "morning":"Good morning!","afternoon":"Good afternoon!",
-    "evening":"Good evening!","night":"Good night!",
-    "battery_full":"Battery fully charged! You can unplug.",
-    "battery_low":"Battery low at 20 percent. Please charge!",
-  },
-  "hi":{
-    "greet":{
-        "friendly":["\u0939\u093e\u0902 \u092c\u094b\u0932\u093f\u090f!","\u0915\u094d\u092f\u093e \u0938\u0947\u0935\u093e \u0915\u0930\u0942\u0902?"],
-        "formal":  ["\u0906\u092a\u0915\u093e \u0939\u0941\u0915\u0941\u092e?","\u0915\u094d\u092f\u093e \u0915\u0930\u0928\u093e \u0939\u0948?"],
-        "funny":   ["\u0906 \u0917\u092f\u093e \u0939\u0942\u0902! \u0939\u0941\u0915\u0941\u092e \u0926\u094b!","\u0939\u093e\u091c\u093c\u093f\u0930 \u0939\u0942\u0902 \u092e\u093e\u0932\u093f\u0915!"],
-        "caring":  ["\u0905\u0930\u0947! \u0915\u094d\u092f\u093e \u091a\u093e\u0939\u093f\u090f?","\u092e\u0948\u0902 \u092f\u0939\u093e\u0902 \u0939\u0942\u0902!"],
-        "calm":    ["\u091c\u0940 \u092c\u094b\u0932\u093f\u090f\u0964","\u0938\u0941\u0928 \u0930\u0939\u093e \u0939\u0942\u0902\u0964"],
-    },
-    "listening":"\u0938\u0941\u0928 \u0930\u0939\u093e \u0939\u0942\u0902...",
-    "not_understood":"\u092e\u093e\u092b\u093c \u0915\u0930\u0947\u0902, \u0926\u094b\u092c\u093e\u0930\u093e \u092c\u094b\u0932\u093f\u090f\u0964",
-    "feature_off":"\u092f\u0939 \u092c\u0902\u0926 \u0939\u0948\u0964 \u0938\u0947\u091f\u093f\u0902\u0917\u094d\u0938 \u0926\u0947\u0916\u0947\u0902\u0964",
-    "morning":"\u0938\u0941\u092a\u094d\u0930\u092d\u093e\u0924!","afternoon":"\u0928\u092e\u0938\u094d\u0924\u0947!",
-    "evening":"\u0936\u0941\u092d \u0938\u0902\u0927\u094d\u092f\u093e!","night":"\u0936\u0941\u092d \u0930\u093e\u0924\u094d\u0930\u093f!",
-    "battery_full":"\u092c\u0948\u091f\u0930\u0940 100% \u0939\u094b \u0917\u0908! \u091a\u093e\u0930\u094d\u091c\u0930 \u0939\u091f\u093e\u0908\u090f\u0964",
-    "battery_low":"\u0927\u094d\u092f\u093e\u0928! \u092c\u0948\u091f\u0930\u0940 20% \u0930\u0939 \u0917\u0908\u0964 \u091a\u093e\u0930\u094d\u091c \u0915\u0930\u0947\u0902!",
-  },
-  "pa":{
-    "greet":{
-        "friendly":["\u0a39\u0a3e\u0a02 \u0a26\u0a71\u0a38\u0a4b!","\u0a15\u0a40 \u0a38\u0a47\u0a35\u0a3e \u0a15\u0a30\u0a3e\u0a02?"],
-        "formal":  ["\u0a24\u0a41\u0a39\u0a3e\u0a21\u0a3e \u0a39\u0a41\u0a15\u0a2e?","\u0a26\u0a71\u0a38\u0a4b \u0a15\u0a40 \u0a1a\u0a3e\u0a39\u0a40\u0a26\u0a3e \u0a39\u0a48?"],
-        "funny":   ["\u0a06 \u0a17\u0a3f\u0a06! \u0a39\u0a41\u0a15\u0a2e \u0a26\u0a4c!","\u0a39\u0a3e\u0a1c\u0a3c\u0a30 \u0a39\u0a3e\u0a02!"],
-        "caring":  ["\u0a13\u0a0f! \u0a15\u0a40 \u0a1a\u0a3e\u0a39\u0a40\u0a26\u0a3e?","\u0a2e\u0a48\u0a02 \u0a07\u0a71\u0a25\u0a47 \u0a39\u0a3e\u0a02!"],
-        "calm":    ["\u0a1c\u0a40 \u0a26\u0a71\u0a38\u0a4b\u0964","\u0a38\u0a41\u0a23 \u0a30\u0a3f\u0a39\u0a3e \u0a39\u0a3e\u0a02\u0964"],
-    },
-    "listening":"\u0a38\u0a41\u0a23 \u0a30\u0a3f\u0a39\u0a3e \u0a39\u0a3e\u0a02...",
-    "not_understood":"\u0a2e\u0a3e\u0a2b\u0a3c \u0a15\u0a30\u0a28\u0a3e\u0964 \u0a26\u0a41\u0a2c\u0a3e\u0a30\u0a3e \u0a2c\u0a4b\u0a32\u0a4b\u0964",
-    "feature_off":"\u0a07\u0a39 \u0a2c\u0a70\u0a26 \u0a39\u0a48\u0964 \u0a38\u0a48\u0a1f\u0a3f\u0a70\u0a17\u0a1c\u0a3c \u0a35\u0a47\u0a16\u0a4b\u0964",
-    "morning":"\u0a38\u0a24 \u0a38\u0a4d\u0a30\u0a40 \u0a05\u0a15\u0a3e\u0a32!","afternoon":"\u0a28\u0a2e\u0a38\u0a15\u0a3e\u0a30!",
-    "evening":"\u0a38\u0a3c\u0a3e\u0a2e \u0a26\u0a40\u0a06\u0a02!","night":"\u0a38\u0a3c\u0a41\u0a2d \u0a30\u0a3e\u0a24!",
-    "battery_full":"\u0a2c\u0a48\u0a1f\u0a30\u0a40 100% \u0a39\u0a4b \u0a17\u0a08! \u0a1a\u0a3e\u0a30\u0a1c\u0a30 \u0a32\u0a3e\u0a39\u0a4b\u0964",
-    "battery_low":"\u0a27\u0a3f\u0a06\u0a28! \u0a2c\u0a48\u0a1f\u0a30\u0a40 20% \u0a30\u0a39\u0a3f \u0a17\u0a08\u0964 \u0a1a\u0a3e\u0a30\u0a1c \u0a15\u0a30\u0a4b!",
-  }
-}
-
-def r(key):
-    lang = S.get("language","en")
-    emo  = S.get("emotion","friendly")
-    res  = RESP.get(lang, RESP["en"])
-    val  = res.get(key, RESP["en"].get(key,""))
-    if isinstance(val, dict):
-        phrases = val.get(emo, val.get("friendly",["..."]))
-        return random.choice(phrases)
-    return val
-
-def time_greeting():
-    h   = datetime.datetime.now().hour
-    key = "morning" if h<12 else "afternoon" if h<17 else "evening" if h<21 else "night"
-    return r(key)
+    if any('\u0900'<=c<='\u097f' for c in text): lang="hi"
+    elif any('\u0a00'<=c<='\u0a7f' for c in text): lang="pa"
+    else:
+        t=text.lower(); w=t.split()
+        lang = "pa" if sum(1 for x in w if x in PUNJABI_W)>=2 else \
+               "hi" if sum(1 for x in w if x in HINDI_W)>=2 else "en"
+    if lang != S.get("language","en"): S["language"]=lang; save_settings(S)
+    t=text.lower()
+    scores={e:sum(1 for w in EMOTIONS[e] if w in t) for e in EMOTIONS}
+    best=max(scores,key=scores.get)
+    emo=EMO_TO_STYLE.get(best if scores[best]>0 else "calm","friendly")
+    if emo != S.get("emotion","friendly"): S["emotion"]=emo; save_settings(S)
 
 # ─────────────────────────────────────────
-#  🎙 WAKE WORD — INLINE COMMAND PARSER
-#
-#  HOW IT WORKS:
-#  SpeechRecognizer runs ALWAYS in background.
-#  Every result is checked for "tara" at start.
-#  If found → everything AFTER "tara" is the command.
-#
-#  "Tara call mom"         → command = "call mom"
-#  "Jarvis what time is it"  → command = "what time is it"
-#  "Tara kya time hai"     → command = "kya time hai" (Hindi auto-detected)
-#  "Jarvis send SMS to dad saying hello" → full command
-#
-#  No two-step needed. One sentence = wake + command.
+#  CACHE
 # ─────────────────────────────────────────
-
-# All variations of wake word across languages
-WAKE_WORDS = [
-    "tara","jarwis","tara","jaarvis",    # English variations (STT noise)
-    "\u091c\u093e\u0930\u094d\u0935\u093f\u0938",  # jarvis in Hindi unicode
-    "\u0a1c\u0a3e\u0a30\u0a35\u0a3f\u0a38",        # jarvis in Punjabi unicode
-]
-
-def extract_command(full_text):
-    """
-    Extract the command after the wake word.
-    Returns (wake_found: bool, command: str)
-
-    Examples:
-      "jarvis call mom"              → (True, "call mom")
-      "hey jarvis open youtube"      → (True, "open youtube")
-      "tara"                       → (True, "")   ← just wake, no command
-      "play music"                   → (False, "")
-    """
-    text_lower = full_text.lower().strip()
-
-    # Check each wake word variant
-    for wake in WAKE_WORDS:
-        # Handle "hey jarvis" prefix too
-        for prefix in ["hey ", "ok ", "okay ", ""]:
-            trigger = prefix + wake
-            if text_lower.startswith(trigger):
-                command = full_text[len(trigger):].strip()
-                return True, command
-
-    return False, ""
-
-# ─────────────────────────────────────────
-#  🤖 AI BRAIN
-# ─────────────────────────────────────────
-JARVIS_SYSTEM = (
-    "You are Jarvis, a smart mobile voice assistant. "
-    "Reply in 1-2 short sentences. No markdown. Plain spoken language only."
-)
-
-def ask_groq(prompt):
+def cache_get(key):
     try:
-        resp = requests.post("https://api.groq.com/openai/v1/chat/completions",
-            headers={"Authorization":f"Bearer {GROQ_API_KEY}","Content-Type":"application/json"},
-            json={"model":"llama3-8b-8192",
-                  "messages":[{"role":"system","content":JARVIS_SYSTEM},
-                               {"role":"user","content":prompt}],
-                  "max_tokens":120,"temperature":0.7}, timeout=10)
-        data = resp.json()
-        if resp.status_code == 200:
-            return data["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        print(f"[Groq] {e}")
+        data = json.load(open(CACHE_FILE)) if os.path.exists(CACHE_FILE) else {}
+        e = data.get(key)
+        if e and time.time()-e.get("ts",0)<7*86400: return e.get("value")
+    except: pass
     return None
 
-def ask_gemini(prompt):
+def cache_set(key,value):
     try:
-        resp = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}",
-            headers={"Content-Type":"application/json"},
-            json={"contents":[{"parts":[{"text":prompt}]}],
-                  "generationConfig":{"maxOutputTokens":120}}, timeout=10)
-        data = resp.json()
-        if resp.status_code == 200:
-            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
-    except Exception as e:
-        print(f"[Gemini] {e}")
-    return None
+        data = json.load(open(CACHE_FILE)) if os.path.exists(CACHE_FILE) else {}
+        data[key]={"value":value,"ts":time.time()}
+        json.dump(data,open(CACHE_FILE,"w"),indent=2)
+    except: pass
+
+# ─────────────────────────────────────────
+#  AI BRAIN
+# ─────────────────────────────────────────
+SARA_SYSTEM = ("You are Sara, a smart voice assistant. "
+               "Reply in 1-2 short sentences. No markdown. Plain spoken language.")
 
 def ask_ai(prompt):
-    return ask_groq(prompt) or ask_gemini(prompt) or r("not_understood")
+    cached = cache_get(f"ai_{prompt[:40]}")
+    if cached: return cached
+    for key,url,body in [
+        (GROQ_API_KEY,
+         "https://api.groq.com/openai/v1/chat/completions",
+         {"model":"llama3-8b-8192",
+          "messages":[{"role":"system","content":SARA_SYSTEM},
+                      {"role":"user","content":prompt}],
+          "max_tokens":120}),
+        (GEMINI_API_KEY,
+         f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}",
+         {"contents":[{"parts":[{"text":prompt}]}],
+          "generationConfig":{"maxOutputTokens":120}}),
+    ]:
+        try:
+            headers = {"Content-Type":"application/json"}
+            if "groq" in url: headers["Authorization"] = f"Bearer {key}"
+            resp = requests.post(url,headers=headers,json=body,timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                ans = (data["choices"][0]["message"]["content"].strip()
+                       if "groq" in url else
+                       data["candidates"][0]["content"]["parts"][0]["text"].strip())
+                cache_set(f"ai_{prompt[:40]}", ans)
+                return ans
+        except Exception as e:
+            print(f"[AI] {e}")
+    return "Sorry, I could not reach the internet right now."
 
 # ─────────────────────────────────────────
-#  🧠 COMMAND PROCESSOR
+#  ANDROID ACTIONS
 # ─────────────────────────────────────────
 def load_contacts():
     if os.path.exists(CONTACTS_FILE):
         with open(CONTACTS_FILE) as f: return json.load(f)
-    sample = {"mom":"+919XXXXXXXXX","dad":"+919XXXXXXXXX","friend":"+919XXXXXXXXX"}
-    json.dump(sample, open(CONTACTS_FILE,"w"), indent=2)
-    return sample
+    s={"mom":"+919XXXXXXXXX","dad":"+919XXXXXXXXX","friend":"+919XXXXXXXXX"}
+    json.dump(s,open(CONTACTS_FILE,"w"),indent=2); return s
 
-def process_command(command, ui_callback=None):
-    """
-    Process command (already stripped of wake word).
-    ui_callback(text) updates the UI label if provided.
-    """
-    if not command:
-        # Just "Tara" with no command — greet
-        reply = r("greet")
-        speak(reply)
-        if ui_callback: ui_callback(reply)
-        return
-
-    # Auto-detect language and emotion
-    auto_detect(command)
-    cmd = command.lower().strip()
-
-    response = ""
-
-    # ── Call ──────────────────────────────────────────────────────
-    if cmd.startswith("call") and "whatsapp" not in cmd:
-        name = cmd.replace("call","").strip()
-        num  = load_contacts().get(name)
-        if num:
-            speak(f"Calling {name}")
-            _make_call(num)
-            response = f"Calling {name}..."
-        else:
-            response = f"No number for {name}. Add to contacts."
-            speak(response)
-
-    # ── WhatsApp message ──────────────────────────────────────────
-    elif any(w in cmd for w in ["send whatsapp","whatsapp message","whatsapp to"]):
-        if "saying" in cmd:
-            to  = cmd.split("to")[1].split("saying")[0].strip() if "to" in cmd else ""
-            msg = cmd.split("saying")[1].strip()
-            num = load_contacts().get(to)
-            if num:
-                _send_whatsapp(num, msg)
-                response = f"WhatsApp sent to {to}"
-            else:
-                response = f"No number for {to}."
-        else:
-            response = "Say: Jarvis WhatsApp to mom saying hello"
-        speak(response)
-
-    # ── WhatsApp call ─────────────────────────────────────────────
-    elif "whatsapp call" in cmd or ("whatsapp" in cmd and "call" in cmd):
-        name = cmd.replace("whatsapp","").replace("call","").strip()
-        num  = load_contacts().get(name)
-        if num:
-            _whatsapp_call(num)
-            response = f"Opening WhatsApp call to {name}"
-        else:
-            response = f"No number for {name}."
-        speak(response)
-
-    # ── SMS ───────────────────────────────────────────────────────
-    elif any(w in cmd for w in ["send sms","send message","text"]):
-        if "saying" in cmd and "to" in cmd:
-            to  = cmd.split("to")[1].split("saying")[0].strip()
-            msg = cmd.split("saying")[1].strip()
-            num = load_contacts().get(to)
-            if num:
-                _send_sms(num, msg)
-                response = f"SMS sent to {to}"
-            else:
-                response = f"No number for {to}."
-        else:
-            response = "Say: Jarvis send SMS to mom saying your message"
-        speak(response)
-
-    # ── Weather ───────────────────────────────────────────────────
-    elif "weather" in cmd:
-        if not feature_on("weather"): speak(r("feature_off")); return
-        city = cmd.split("in ")[-1].strip() if "in " in cmd else "Pathankot"
-        cache_key = f"weather_{city.lower()}"
-        cached = cache_get(cache_key)
-        if cached:
-            speak(cached)
-            response = cached
-        else:
-            speak(f"Checking weather for {city}")
-            response = ask_ai(f"What is the current weather in {city}? Give a brief spoken answer.")
-            if response: cache_set(cache_key, response)
-            speak(response)
-
-    # ── Battery ───────────────────────────────────────────────────
-    elif "battery" in cmd:
-        pct, charging = _get_battery()
-        state = "charging" if charging else "not charging"
-        response = f"Battery is at {pct} percent and {state}."
-        speak(response)
-
-    # ── Time ──────────────────────────────────────────────────────
-    elif "time" in cmd and "what" in cmd:
-        response = datetime.datetime.now().strftime("It is %I:%M %p")
-        speak(response)
-
-    # ── Date ──────────────────────────────────────────────────────
-    elif "date" in cmd or ("what" in cmd and "day" in cmd):
-        response = datetime.datetime.now().strftime("Today is %A, %B %d, %Y")
-        speak(response)
-
-    # ── Open app / website ────────────────────────────────────────
-    elif cmd.startswith("open"):
-        target = cmd.replace("open","").strip()
-        _open_android(target)
-        response = f"Opening {target}"
-        speak(response)
-
-    # ── Help ──────────────────────────────────────────────────────
-    elif "help" in cmd or "what can you do" in cmd:
-        response = ("I can call people, send SMS and WhatsApp, "
-                    "check weather and battery, tell time, open apps, "
-                    "and answer anything. Just say Jarvis then your command!")
-        speak(response)
-
-    # ── AI fallback ───────────────────────────────────────────────
-    else:
-        if not feature_on("ai"): speak(r("feature_off")); return
-        response = ask_ai(command)
-        speak(response)
-
-    if ui_callback and response:
-        ui_callback(response)
-
-# ─────────────────────────────────────────
-#  📱 ANDROID INTENTS (Pyjnius)
-# ─────────────────────────────────────────
-def _make_call(number):
+def _android_intent(action, uri=None, extras=None):
     try:
-        if PLYER_OK:
-            from plyer import call
-            call.makecall(tel=number); return
         from jnius import autoclass
         Intent = autoclass('android.content.Intent')
         Uri    = autoclass('android.net.Uri')
-        PythonActivity = autoclass('org.kivy.android.PythonActivity')
-        intent = Intent(Intent.ACTION_CALL)
-        intent.setData(Uri.parse(f"tel:{number}"))
-        PythonActivity.mActivity.startActivity(intent)
-    except Exception as e:
-        print(f"[Call] {e}")
+        PA     = autoclass('org.kivy.android.PythonActivity')
+        intent = Intent(action)
+        if uri: intent.setData(Uri.parse(uri))
+        if extras:
+            for k,v in extras.items(): intent.putExtra(k,v)
+        PA.mActivity.startActivity(intent)
+    except Exception as e: print(f"[Intent] {e}")
 
-def _send_sms(number, message):
-    try:
-        if PLYER_OK:
-            from plyer import sms
-            sms.send(recipient=number, message=message); return
-        from jnius import autoclass
-        Intent = autoclass('android.content.Intent')
-        Uri    = autoclass('android.net.Uri')
-        PythonActivity = autoclass('org.kivy.android.PythonActivity')
-        intent = Intent(Intent.ACTION_SENDTO)
-        intent.setData(Uri.parse(f"smsto:{number}"))
-        intent.putExtra("sms_body", message)
-        PythonActivity.mActivity.startActivity(intent)
-    except Exception as e:
-        print(f"[SMS] {e}")
+def make_call(number):
+    _android_intent('android.intent.action.CALL', f"tel:{number}")
 
-def _send_whatsapp(number, message):
+def send_sms(number, msg):
+    _android_intent('android.intent.action.SENDTO',
+                    f"smsto:{number}", {"sms_body":msg})
+
+def send_whatsapp(number, msg):
     try:
         import webbrowser
-        webbrowser.open(f"whatsapp://send?phone={number}&text={message.replace(' ','%20')}")
-    except Exception as e:
-        print(f"[WA] {e}")
+        webbrowser.open(f"whatsapp://send?phone={number}&text={msg.replace(' ','%20')}")
+    except Exception as e: print(f"[WA] {e}")
 
-def _whatsapp_call(number):
+def open_url(target):
     try:
         import webbrowser
-        webbrowser.open(f"whatsapp://call?phone={number.replace('+','')}")
-    except Exception as e:
-        print(f"[WA Call] {e}")
-
-def _open_android(target):
-    try:
-        import webbrowser
-        urls = {"youtube":"https://youtube.com","google":"https://google.com",
-                "whatsapp":"https://web.whatsapp.com","instagram":"https://instagram.com",
-                "facebook":"https://facebook.com","twitter":"https://twitter.com"}
-        url = urls.get(target.lower(), f"https://google.com/search?q={target.replace(' ','+')}")
-        webbrowser.open(url)
-    except Exception as e:
-        print(f"[Open] {e}")
-
-def _get_battery():
-    try:
-        if PLYER_OK:
-            status = android_battery.status
-            return int(status.get("percentage",0)), status.get("isCharging",False)
+        urls={"youtube":"https://youtube.com","google":"https://google.com",
+              "whatsapp":"https://web.whatsapp.com","instagram":"https://instagram.com",
+              "facebook":"https://facebook.com","twitter":"https://twitter.com"}
+        webbrowser.open(urls.get(target.lower(),
+            f"https://google.com/search?q={target.replace(' ','+')}"))
     except: pass
-    return 0, False
 
-# Battery background monitor
-_batt_full_alerted = False
-_batt_low_alerted  = False
+def get_battery():
+    try:
+        from plyer import battery
+        s=battery.status; pct=int(s.get("percentage",0))
+        state="charging" if s.get("isCharging") else "not charging"
+        speak(f"Battery is at {pct} percent and {state}.")
+        return pct,s.get("isCharging",False)
+    except: return 0,False
 
+_bf=False; _bl=False
 def battery_monitor():
-    global _batt_full_alerted, _batt_low_alerted
+    global _bf,_bl
     while True:
         try:
-            pct, plugged = _get_battery()
-            if pct>=100 and plugged and not _batt_full_alerted and S["battery"]["full_alert"]:
-                speak(r("battery_full")); _batt_full_alerted = True
-            if pct<=20 and not plugged and not _batt_low_alerted and S["battery"]["low_alert"]:
-                speak(r("battery_low")); _batt_low_alerted = True
-            if not plugged: _batt_full_alerted = False
-            if plugged:     _batt_low_alerted  = False
+            pct,plug=get_battery()
+            if pct>=100 and plug and not _bf and S["battery"]["full_alert"]:
+                speak("Battery fully charged. You can unplug."); _bf=True
+            if pct<=20 and not plug and not _bl and S["battery"]["low_alert"]:
+                speak("Battery is low. Please charge."); _bl=True
+            if not plug: _bf=False
+            if plug:     _bl=False
         except: pass
         time.sleep(60)
 
 # ─────────────────────────────────────────
-#  📱 ANDROID SPEECH RECOGNIZER (Pyjnius)
-#  Runs always-on in background.
-#  Every result checked for wake word.
-#  Command extracted inline — no two-step.
+#  COMMAND PROCESSOR
 # ─────────────────────────────────────────
-speech_recognizer_instance = None
+def process_command(command):
+    if not command:
+        speak(random.choice(["Yes?","How can I help?","Tell me?"])); return
+    auto_detect(command)
+    cmd = command.lower().strip()
 
-def start_continuous_listening(ui_callback=None):
+    if "call" in cmd and "whatsapp" not in cmd:
+        name=cmd.replace("call","").strip()
+        num=load_contacts().get(name)
+        if num: speak(f"Calling {name}"); make_call(num)
+        else: speak(f"No number for {name}.")
+
+    elif "whatsapp" in cmd and "call" in cmd:
+        name=cmd.replace("whatsapp","").replace("call","").strip()
+        num=load_contacts().get(name)
+        if num: send_whatsapp(num,""); speak(f"Opening WhatsApp for {name}")
+        else: speak(f"No number for {name}.")
+
+    elif any(w in cmd for w in ["send sms","send message","text"]):
+        if "to" in cmd and "saying" in cmd:
+            to=cmd.split("to")[1].split("saying")[0].strip()
+            msg=cmd.split("saying")[1].strip()
+            num=load_contacts().get(to)
+            if num: send_sms(num,msg); speak(f"SMS sent to {to}")
+            else: speak(f"No number for {to}.")
+        else: speak("Say: send SMS to mom saying your message")
+
+    elif "whatsapp" in cmd and "saying" in cmd and "to" in cmd:
+        to=cmd.split("to")[1].split("saying")[0].strip()
+        msg=cmd.split("saying")[1].strip()
+        num=load_contacts().get(to)
+        if num: send_whatsapp(num,msg); speak(f"WhatsApp sent to {to}")
+        else: speak(f"No number for {to}.")
+
+    elif "weather" in cmd:
+        city=cmd.split("in ")[-1].strip() if "in " in cmd else "Pathankot"
+        cached=cache_get(f"weather_{city}")
+        if cached: speak(cached)
+        else:
+            speak(f"Checking weather for {city}")
+            ans=ask_ai(f"Current weather in {city} India? One sentence.")
+            if ans: cache_set(f"weather_{city}",ans); speak(ans)
+
+    elif "battery" in cmd: get_battery()
+
+    elif "time" in cmd:
+        speak(datetime.datetime.now().strftime("It is %I:%M %p"))
+
+    elif "date" in cmd or "day" in cmd:
+        speak(datetime.datetime.now().strftime("Today is %A, %B %d"))
+
+    elif "open" in cmd:
+        t=cmd.replace("open","").strip()
+        open_url(t); speak(f"Opening {t}")
+
+    elif any(w in cmd for w in ["stop","goodbye","sleep","turn off"]):
+        speak("Going to sleep. Say Sara to wake me.")
+        S["sara_on"]=False; save_settings(S)
+
+    elif any(w in cmd for w in ["wake up","start","turn on"]):
+        S["sara_on"]=True; save_settings(S)
+        speak("I'm back! How can I help?")
+
+    elif "help" in cmd or "what can you do" in cmd:
+        speak("Say Sara then: call, SMS, WhatsApp, weather, battery, "
+              "time, open YouTube, or ask me anything.")
+    else:
+        if not feature_on("ai"): speak("AI is off."); return
+        speak(ask_ai(command))
+
+# ─────────────────────────────────────────
+#  ANDROID SPEECH RECOGNIZER — ALWAYS ON
+# ─────────────────────────────────────────
+def extract_command(text):
+    t=text.lower().strip()
+    for wake in WAKE_WORDS:
+        for pre in ["hey ","ok ","okay ","hi ",""]:
+            trigger=pre+wake
+            if t.startswith(trigger):
+                return True, text[len(trigger):].strip()
+    return False,""
+
+def start_continuous_stt():
     """
-    Start Android SpeechRecognizer in a loop.
-    Each result is checked for 'Tara' wake word.
-    Command is extracted inline from the same sentence.
+    Start Android SpeechRecognizer in continuous loop.
+    Uses phone's built-in speech chip — very low battery.
+    Supports all Indian accents automatically.
     """
     try:
         from jnius import autoclass, PythonJavaClass, java_method
-        SpeechRecognizer  = autoclass('android.speech.SpeechRecognizer')
-        RecognizerIntent  = autoclass('android.speech.RecognizerIntent')
-        Intent            = autoclass('android.content.Intent')
-        PythonActivity    = autoclass('org.kivy.android.PythonActivity')
-        Locale            = autoclass('java.util.Locale')
+        from kivy.clock import Clock
 
-        class JarvisRecognitionListener(PythonJavaClass):
+        SpeechRecognizer = autoclass('android.speech.SpeechRecognizer')
+        RecognizerIntent = autoclass('android.speech.RecognizerIntent')
+        Intent           = autoclass('android.content.Intent')
+        PythonActivity   = autoclass('org.kivy.android.PythonActivity')
+
+        rec = SpeechRecognizer.createSpeechRecognizer(PythonActivity.mActivity)
+
+        class Listener(PythonJavaClass):
             __javainterfaces__ = ['android/speech/RecognitionListener']
 
-            def __init__(self, callback):
-                super().__init__()
-                self.callback = callback
-
             @java_method('([B)V')
-            def onBufferReceived(self, buffer): pass
-
+            def onBufferReceived(self,b): pass
             @java_method('(ILandroid/os/Bundle;)V')
-            def onError(self, error, params):
-                # Auto-restart on error so listening never stops
-                Clock.schedule_once(lambda dt: restart_listening(), 0.5)
-
+            def onError(self,e,p):
+                Clock.schedule_once(lambda dt:restart(),1)
             @java_method('(Landroid/os/Bundle;)V')
-            def onReadyForSpeech(self, params): pass
-
+            def onReadyForSpeech(self,p): pass
             @java_method('(Landroid/os/Bundle;)V')
-            def onBeginningOfSpeech(self, params): pass
-
+            def onBeginningOfSpeech(self,p): pass
             @java_method('(F)V')
-            def onRmsChanged(self, rmsdB): pass
-
+            def onRmsChanged(self,r): pass
             @java_method('()V')
             def onEndOfSpeech(self): pass
-
             @java_method('(Landroid/os/Bundle;)V')
-            def onResults(self, results):
-                global _last_command_time
-                matches = results.getStringArrayList(RecognizerIntent.EXTRA_RESULTS)
-                if matches and matches.size() > 0:
-                    full_text = matches.get(0)
-                    print(f"[STT] Heard: {full_text}")
-                    found, command = extract_command(full_text)
+            def onPartialResults(self,p):
+                try:
+                    partial=p.getStringArrayList("android.speech.extra.PARTIAL_RESULTS")
+                    if partial and partial.size()>0:
+                        t=partial.get(0).lower()
+                        if any(w in t for w in WAKE_WORDS):
+                            print(f"[Partial wake] {t}")
+                except: pass
+            @java_method('(Landroid/os/Bundle;)V')
+            def onResults(self,results):
+                matches=results.getStringArrayList(RecognizerIntent.EXTRA_RESULTS)
+                if matches and matches.size()>0:
+                    text=matches.get(0)
+                    print(f"[STT] {text}")
+                    found,cmd=extract_command(text)
                     if found:
-                        now = time.time()
-                        # Cooldown: ignore if command fired too recently
-                        if now - _last_command_time > COMMAND_COOLDOWN:
-                            _last_command_time = now
-                            if self.callback: self.callback(f"You: {full_text}")
-                            threading.Thread(
-                                target=process_command,
-                                args=(command, self.callback),
-                                daemon=True).start()
-
-                # ── Smart restart logic ────────────────────────
-                # Keep listening when: screen ON or screen LOCKED
-                # Only pause when: screen completely OFF or Jarvis disabled
-                jarvis_enabled = S.get("jarvis_on", True)
-                should_listen  = jarvis_enabled and (_screen_on or _screen_locked)
-                if should_listen:
-                    Clock.schedule_once(lambda dt: restart_listening(), 0.5)
-                else:
-                    print("[STT] Screen OFF — pausing to save battery")
-
-            @java_method('(Landroid/os/Bundle;)V')
-            def onPartialResults(self, partial): pass
-
+                        threading.Thread(target=process_command,
+                                        args=(cmd,),daemon=True).start()
+                if S.get("sara_on",True):
+                    Clock.schedule_once(lambda dt:restart(),0.3)
             @java_method('(ILandroid/os/Bundle;)V')
-            def onEvent(self, event, params): pass
+            def onEvent(self,e,p): pass
 
-        def restart_listening():
-            global speech_recognizer_instance
+        listener=Listener()
+        rec.setRecognitionListener(listener)
+
+        def restart():
+            if not S.get("sara_on",True): return
             try:
-                # Indian locale codes for better accent recognition
-                lang_map = {"en":"en-IN","hi":"hi-IN","pa":"pa-IN"}
-                lang_tag = lang_map.get(S.get("language","en"), "en-IN")
-
-                intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+                codes=get_lang_codes()
+                intent=Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
                 intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                                 RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, lang_tag)
+                intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, codes[0])
                 intent.putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES",
-                                ["en-IN","hi-IN","pa-IN"])  # multi-language support
+                                codes[1:])
                 intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, True)
-
-                if speech_recognizer_instance:
-                    speech_recognizer_instance.startListening(intent)
+                intent.putExtra(
+                    RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS,
+                    1500)
+                rec.startListening(intent)
             except Exception as e:
                 print(f"[STT restart] {e}")
-                Clock.schedule_once(lambda dt: restart_listening(), 2)
+                Clock.schedule_once(lambda dt:restart(),2)
 
-        # Create recognizer on main thread
-        activity = PythonActivity.mActivity
-        recognizer = SpeechRecognizer.createSpeechRecognizer(activity)
-        listener   = JarvisRecognitionListener(ui_callback)
-        recognizer.setRecognitionListener(listener)
-        speech_recognizer_instance = recognizer
-        restart_listening()
-        print("[STT] Continuous listening started")
+        restart()
+        print("[Sara] STT started — say 'Sara' to activate")
 
     except Exception as e:
-        print(f"[STT] Pyjnius not available (not in APK): {e}")
-        print("[STT] In PC testing mode — use mic button")
+        print(f"[STT] Not in APK: {e}")
 
 # ─────────────────────────────────────────
-#  📱 KIVY UI
+#  SCREEN ON/OFF + WAKELOCK
 # ─────────────────────────────────────────
-TEAL  = get_color_from_hex("#1D9E75")
-DARK  = get_color_from_hex("#0F2027")
-CARD  = get_color_from_hex("#1a2a2a")
-WHITE = get_color_from_hex("#E8F5F0")
-GRAY  = get_color_from_hex("#2a3a3a")
+_screen_on=True
+_wakelock=None
 
-class MainScreen(Screen):
-    def __init__(self, **kw):
-        super().__init__(**kw)
-        self.build_ui()
+def acquire_wakelock():
+    global _wakelock
+    try:
+        from jnius import autoclass
+        PM=autoclass('android.os.PowerManager')
+        PA=autoclass('org.kivy.android.PythonActivity')
+        pm=PA.mActivity.getSystemService(PA.mActivity.POWER_SERVICE)
+        _wakelock=pm.newWakeLock(PM.PARTIAL_WAKE_LOCK,'Sara:WakeLock')
+        _wakelock.acquire()
+    except Exception as e: print(f"[WakeLock] {e}")
 
-    def build_ui(self):
-        root = BoxLayout(orientation='vertical', padding=dp(14), spacing=dp(10))
+def setup_screen_monitor():
+    try:
+        from jnius import autoclass, PythonJavaClass, java_method
+        from kivy.clock import Clock
+        Intent=autoclass('android.content.Intent')
+        IntentFilter=autoclass('android.content.IntentFilter')
+        PA=autoclass('org.kivy.android.PythonActivity')
 
-        # Header
-        header = BoxLayout(size_hint_y=None, height=dp(56), spacing=dp(8))
-        header.add_widget(Label(text="T.A.R.A", font_size=dp(22),
-                                color=WHITE, bold=True, size_hint_x=0.55))
-        self.status_dot = Label(text="● online", font_size=dp(13),
-                                color=TEAL, size_hint_x=0.25)
-        master_sw = Switch(active=True, size_hint_x=0.2)
-        master_sw.bind(active=self.on_master)
-        header.add_widget(self.status_dot)
-        header.add_widget(master_sw)
-        root.add_widget(header)
+        class ScreenReceiver(PythonJavaClass):
+            __javainterfaces__=['android/content/BroadcastReceiver']
+            @java_method('(Landroid/content/Context;Landroid/content/Intent;)V')
+            def onReceive(self,ctx,intent):
+                global _screen_on
+                action=intent.getAction()
+                if action==Intent.ACTION_SCREEN_OFF:
+                    _screen_on=False
+                    print("[Screen] OFF — pausing STT")
+                elif action==Intent.ACTION_SCREEN_ON:
+                    _screen_on=True
+                    acquire_wakelock()
+                    print("[Screen] ON — resuming STT")
+                    if S.get("sara_on",True):
+                        Clock.schedule_once(
+                            lambda dt:start_continuous_stt(),0.5)
 
-        # Language bar
-        lang_row = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(8))
-        self.lang_btns = {}
-        for code, lbl in [("en","EN"), ("hi","हिं"), ("pa","ਪੰਜ")]:
-            btn = Button(text=lbl, font_size=dp(15), color=WHITE,
-                         background_color=TEAL if S["language"]==code else GRAY)
-            btn.bind(on_press=lambda x, c=code: self.set_lang(c))
-            self.lang_btns[code] = btn
-            lang_row.add_widget(btn)
-        root.add_widget(lang_row)
+        f=IntentFilter()
+        f.addAction(Intent.ACTION_SCREEN_ON)
+        f.addAction(Intent.ACTION_SCREEN_OFF)
+        f.addAction("android.intent.action.USER_PRESENT")
+        PA.mActivity.registerReceiver(ScreenReceiver(),f)
+    except Exception as e: print(f"[Screen monitor] {e}")
 
-        # Mic button (always-on listening indicator)
-        self.mic_btn = Button(
-            text="🎙 ALWAYS LISTENING\nSay: Tara [command]",
-            font_size=dp(16), size_hint_y=None, height=dp(130),
-            background_color=TEAL, color=WHITE, bold=True)
-        self.mic_btn.bind(on_press=self.on_mic_press)
-        root.add_widget(self.mic_btn)
+# ─────────────────────────────────────────
+#  FOREGROUND NOTIFICATION
+# ─────────────────────────────────────────
+def start_foreground():
+    try:
+        from jnius import autoclass
+        PA=autoclass('org.kivy.android.PythonActivity')
+        NB=autoclass('android.app.Notification$Builder')
+        NM=autoclass('android.app.NotificationManager')
+        NC=autoclass('android.app.NotificationChannel')
+        ctx=PA.mActivity
+        ch=NC("sara","Sara Assistant",NM.IMPORTANCE_LOW)
+        ctx.getSystemService(ctx.NOTIFICATION_SERVICE).createNotificationChannel(ch)
+        n=NB(ctx,"sara")\
+            .setContentTitle("Sara is listening")\
+            .setContentText("Say 'Sara' to activate")\
+            .setSmallIcon(17301543)\
+            .setOngoing(True)\
+            .build()
+        ctx.startForeground(1,n)
+        print("[Foreground] Service started")
+    except Exception as e: print(f"[Foreground] {e}")
 
-        # Example commands
-        examples = Label(
-            text='Examples:\n"Tara call mom"\n"Tara weather in Delhi"\n"Tara kya time hai"',
-            font_size=dp(13), color=get_color_from_hex("#7fb5a0"),
-            size_hint_y=None, height=dp(80), halign='center')
-        examples.bind(size=examples.setter('text_size'))
-        root.add_widget(examples)
+# ─────────────────────────────────────────
+#  KIVY APP — NO UI
+# ─────────────────────────────────────────
+from kivy.app import App
+from kivy.uix.widget import Widget
+from kivy.core.window import Window
 
-        # Response display
-        self.response_lbl = Label(
-            text=time_greeting(), font_size=dp(15), color=WHITE,
-            size_hint_y=None, height=dp(90), halign='center')
-        self.response_lbl.bind(size=self.response_lbl.setter('text_size'))
-        root.add_widget(self.response_lbl)
-
-        # Battery
-        self.batt_lbl = Label(text="Battery: --", font_size=dp(13),
-                              color=get_color_from_hex("#7fb5a0"),
-                              size_hint_y=None, height=dp(30))
-        root.add_widget(self.batt_lbl)
-
-        # Settings button
-        settings_btn = Button(text="⚙ Settings", font_size=dp(14),
-                              size_hint_y=None, height=dp(44),
-                              background_color=GRAY, color=WHITE)
-        settings_btn.bind(on_press=lambda x: setattr(
-            self.manager,'current','settings'))
-        root.add_widget(settings_btn)
-
-        self.add_widget(root)
-
-        # Start battery monitor + UI updates
-        Clock.schedule_interval(self.update_battery, 60)
-        self.update_battery(0)
-        threading.Thread(target=battery_monitor, daemon=True).start()
-
-        # Start continuous always-on listening
-        Clock.schedule_once(lambda dt: start_continuous_listening(
-            self.update_response), 1)
-
-    def on_master(self, sw, val):
-        S["jarvis_on"] = val; save_settings(S)
-        self.status_dot.text  = "● online" if val else "● offline"
-        self.status_dot.color = TEAL if val else GRAY
-
-    def set_lang(self, code):
-        S["language"] = code; save_settings(S)
-        for c, btn in self.lang_btns.items():
-            btn.background_color = TEAL if c==code else GRAY
-
-    def on_mic_press(self, btn):
-        # Manual tap → speak instructions
-        speak(r("greet"))
-        self.update_response("Listening... say Jarvis + command")
-
-    def update_response(self, text):
-        Clock.schedule_once(lambda dt: setattr(self.response_lbl,'text',text), 0)
-
-    def update_battery(self, dt):
-        pct, charging = _get_battery()
-        self.batt_lbl.text = f"Battery: {pct}% {'⚡ charging' if charging else ''}"
-
-
-class SettingsScreen(Screen):
-    def __init__(self, **kw):
-        super().__init__(**kw)
-        self.build_ui()
-
-    def build_ui(self):
-        root = BoxLayout(orientation='vertical', padding=dp(14), spacing=dp(8))
-        back = Button(text="← Back", size_hint_y=None, height=dp(44),
-                      background_color=GRAY, color=WHITE, font_size=dp(14))
-        back.bind(on_press=lambda x: setattr(self.manager,'current','main'))
-        root.add_widget(back)
-        root.add_widget(Label(text="Features", font_size=dp(16),
-                              color=TEAL, size_hint_y=None, height=dp(30)))
-        scroll = ScrollView()
-        inner  = GridLayout(cols=1, spacing=dp(6), size_hint_y=None)
-        inner.bind(minimum_height=inner.setter('height'))
-        for key, label in [("sms","SMS"),("whatsapp","WhatsApp"),("calls","Phone Calls"),
-                            ("weather","Weather"),("news","News"),("ai","AI Brain"),
-                            ("reminder","Reminders"),("lock_screen_listen","Listen on locked screen")]:
-            row = BoxLayout(size_hint_y=None, height=dp(50), spacing=dp(8))
-            row.add_widget(Label(text=label, font_size=dp(15),
-                                 color=WHITE, size_hint_x=0.7, halign='left'))
-            sw = Switch(active=S["features"].get(key,True), size_hint_x=0.3)
-            sw.bind(active=lambda x,v,k=key: self._toggle(k,v))
-            row.add_widget(sw)
-            inner.add_widget(row)
-        inner.add_widget(Label(text="Emotion Mode", font_size=dp(14),
-                               color=TEAL, size_hint_y=None, height=dp(32)))
-        emo = Spinner(text=S.get("emotion","friendly"),
-                      values=["friendly","formal","funny","caring","calm"],
-                      size_hint_y=None, height=dp(44), font_size=dp(14))
-        emo.bind(text=lambda x,v: self._set_emotion(v))
-        inner.add_widget(emo)
-        scroll.add_widget(inner)
-        root.add_widget(scroll)
-        self.add_widget(root)
-
-    def _toggle(self, key, val):
-        S["features"][key] = val; save_settings(S)
-
-    def _set_emotion(self, val):
-        S["emotion"] = val; save_settings(S)
-
-    def _toggle_lockscreen(self, val):
-        S["features"]["lock_screen_listen"] = val
-        save_settings(S)
-        if val:
-            acquire_wakelock()
-            speak("Tara will now listen on locked screen.")
-        else:
-            release_wakelock()
-            speak("Lock screen listening disabled.")
-
-
-class JarvisApp(App):
+class SaraApp(App):
     def build(self):
-        Window.clearcolor = DARK
-        sm = ScreenManager(transition=FadeTransition())
-        sm.add_widget(MainScreen(name='main'))
-        sm.add_widget(SettingsScreen(name='settings'))
-        return sm
+        Window.size=(1,1)   # invisible window
+        try: Window.hide()
+        except: pass
+        return Widget()     # no UI
 
     def on_start(self):
-        speak(time_greeting() + " " + r("greet"))
-        self._start_foreground_service()   # keeps app alive when locked
-        self._register_screen_listener()
+        threading.Thread(target=start_foreground,daemon=True).start()
+        threading.Thread(target=battery_monitor,daemon=True).start()
+        self._request_permissions()
         acquire_wakelock()
+        setup_screen_monitor()
+        threading.Thread(target=start_continuous_stt,daemon=True).start()
+        h=datetime.datetime.now().hour
+        g="Good morning" if h<12 else "Good afternoon" if h<17 else "Good evening"
+        speak(f"{g}! Sara is ready. Say Sara to activate.")
 
-    def _start_foreground_service(self):
-        """
-        Start Android Foreground Service with a notification.
-        This is what keeps Jarvis alive when phone is locked —
-        Android cannot kill foreground services.
-        Same technique used by Siri, Google Assistant, Spotify.
-        """
+    def _request_permissions(self):
         try:
-            from jnius import autoclass
-            Intent         = autoclass('android.content.Intent')
-            PythonActivity = autoclass('org.kivy.android.PythonActivity')
-            context        = PythonActivity.mActivity
+            from android.permissions import request_permissions, Permission
+            request_permissions([
+                Permission.RECORD_AUDIO,
+                Permission.SEND_SMS,
+                Permission.CALL_PHONE,
+                Permission.READ_CONTACTS,
+                Permission.WRITE_CONTACTS,
+                Permission.READ_PHONE_STATE,
+                Permission.INTERNET,
+                Permission.RECEIVE_BOOT_COMPLETED,
+                Permission.FOREGROUND_SERVICE,
+            ])
+        except Exception as e: print(f"[Perms] {e}")
 
-            # Start a simple foreground service via intent
-            # The service shows a persistent notification:
-            # "Jarvis is listening..."
-            serviceIntent = Intent(context, context.getClass())
-            serviceIntent.setAction("START_JARVIS_FOREGROUND")
-            context.startForegroundService(serviceIntent)
-            print("[Service] Foreground service started — Jarvis survives lock screen")
-        except Exception as e:
-            print(f"[Service] Foreground service not available: {e}")
-            print("[Service] Jarvis will still work but may be killed when locked on some phones")
-
-    def _register_screen_listener(self):
-        """
-        Listen for screen ON/OFF to pause/resume STT.
-        Saves significant battery — same technique as Siri.
-        """
-        try:
-            from jnius import autoclass, PythonJavaClass, java_method
-            Context        = autoclass('android.content.Context')
-            Intent         = autoclass('android.content.Intent')
-            IntentFilter   = autoclass('android.content.IntentFilter')
-            PythonActivity = autoclass('org.kivy.android.PythonActivity')
-
-            class ScreenReceiver(PythonJavaClass):
-                __javainterfaces__ = ['android/content/BroadcastReceiver']
-
-                @java_method('(Landroid/content/Context;Landroid/content/Intent;)V')
-                def onReceive(self, context, intent):
-                    global _screen_on, _screen_locked, _listening_active
-                    action = intent.getAction()
-
-                    if action == Intent.ACTION_SCREEN_OFF:
-                        # Screen completely turned off — pause STT, save battery
-                        _screen_on    = False
-                        _screen_locked = False
-                        release_wakelock()
-                        print("[Battery] Screen OFF — STT paused")
-
-                    elif action == Intent.ACTION_SCREEN_ON:
-                        # Screen turned on (may or may not be unlocked)
-                        _screen_on = True
-                        acquire_wakelock()
-                        print("[Battery] Screen ON — STT active")
-                        if S.get("jarvis_on", True):
-                            Clock.schedule_once(
-                                lambda dt: start_continuous_listening(None), 0.5)
-
-                    elif action == "android.intent.action.USER_PRESENT":
-                        # Phone UNLOCKED — already listening, just log
-                        _screen_locked = False
-                        print("[Battery] Phone unlocked")
-
-                    elif action == "android.intent.action.SCREEN_LOCKED" or                          action == "com.android.internal.policy.intent.action.SCREEN_LOCKED":
-                        # Phone LOCKED — keep STT running! (like Siri)
-                        _screen_locked = True
-                        acquire_wakelock()   # hold wakelock so CPU stays on
-                        print("[Battery] Screen LOCKED — STT still running (Siri mode)")
-
-            filt = IntentFilter()
-            filt.addAction(Intent.ACTION_SCREEN_ON)
-            filt.addAction(Intent.ACTION_SCREEN_OFF)
-            filt.addAction("android.intent.action.USER_PRESENT")  # phone unlocked
-            filt.addAction("android.intent.action.USER_PRESENT")
-            filt.addAction("android.intent.action.SCREEN_LOCKED")
-            receiver = ScreenReceiver()
-            PythonActivity.mActivity.registerReceiver(receiver, filt)
-            print("[Battery] Screen listener registered")
-        except Exception as e:
-            print(f"[Battery] Screen listener not available: {e}")
-
+    def on_pause(self): return True
+    def on_resume(self): pass
 
 if __name__ == "__main__":
-    JarvisApp().run()
+    SaraApp().run()
