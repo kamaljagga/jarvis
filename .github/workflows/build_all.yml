@@ -70,7 +70,7 @@ jobs:
           sdkmanager "platform-tools" "build-tools;34.0.0" "platforms;android-34" "ndk;25.2.9519653"
           echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/25.2.9519653" >> $GITHUB_ENV
 
--       name: Install Python packages
+      - name: Install Python packages
         run: |
           pip install --upgrade pip setuptools wheel
           pip install buildozer cython==0.29.37
@@ -89,7 +89,7 @@ jobs:
           key: buildozer-v3-${{ hashFiles('android/buildozer.spec') }}
           restore-keys: buildozer-v3-
 
--       name: Build APK
+      - name: Build APK
         working-directory: android
         timeout-minutes: 45
         env:
