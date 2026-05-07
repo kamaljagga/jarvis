@@ -1,7 +1,7 @@
 [app]
 title = Sara Assistant
 package.name = sara
-package.domain = com.yourname.sara
+package.domain = com.yourname
 source.dir = .
 source.include_exts = py,png,jpg,kv,json
 version = 1.0
@@ -13,7 +13,7 @@ orientation = portrait
 fullscreen = 1
 
 # Extensive permissions for hardware and background services
-android.permissions = INTERNET,RECORD_AUDIO,CAMERA,SET_ALARM,BLUETOOTH,BLUETOOTH_CONNECT,WAKE_LOCK,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MICROPHONE,READ_CONTACTS,CALL_PHONE,SEND_SMS
+android.permissions = INTERNET,RECORD_AUDIO,CAMERA,SET_ALARM,BLUETOOTH,BLUETOOTH_CONNECT,WAKE_LOCK,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MICROPHONE,READ_CONTACTS,CALL_PHONE,SEND_SMS,POST_NOTIFICATIONS
 
 android.api = 34
 android.minapi = 24

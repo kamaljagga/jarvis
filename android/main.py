@@ -69,8 +69,10 @@ class SaraApp(MDApp):
         self.ui.status.text = "Requesting Permissions..."
         request_permissions([
             Permission.RECORD_AUDIO, Permission.CAMERA,
-            Permission.FOREGROUND_SERVICE, Permission.CALL_PHONE,
-            Permission.READ_CONTACTS, Permission.SEND_SMS
+            Permission.CALL_PHONE, Permission.READ_CONTACTS, 
+            Permission.SEND_SMS,
+            # Use the raw string because older Kivy versions don't have the enum
+            'android.permission.POST_NOTIFICATIONS'
         ], self.permissions_callback)
 
     def permissions_callback(self, permissions, results):
