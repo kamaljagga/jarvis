@@ -383,4 +383,9 @@ if __name__ == '__main__':
     start_stt()
     
     # Keep alive
+<<<<<<< HEAD
     while True: time.sleep(1)
+=======
+    while True: time.sleep(1)
+        
+>>>>>>> eb1dbca9df3ac73c627ded75d96bf5d1b92aa160
