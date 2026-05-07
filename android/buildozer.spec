@@ -17,7 +17,7 @@ fullscreen = 1
 # Extensive permissions for hardware, vision, and background services
 android.permissions = INTERNET, RECORD_AUDIO, CAMERA, SET_ALARM, BLUETOOTH, BLUETOOTH_CONNECT, WAKE_LOCK, FOREGROUND_SERVICE, FOREGROUND_SERVICE_MICROPHONE, READ_CONTACTS, CALL_PHONE, SEND_SMS, POST_NOTIFICATIONS
 
-android.api = 34
+android.api = 33
 android.minapi = 24
 android.ndk = 25b
 android.archs = arm64-v8a, armeabi-v7a

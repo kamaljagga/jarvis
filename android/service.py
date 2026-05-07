@@ -734,6 +734,10 @@ def process_command(command):
 #  MUST be called within 5 seconds of service start
 #  or Android 8+ will kill the service
 # ─────────────────────────────────────────
+# ─────────────────────────────────────────
+#  FOREGROUND NOTIFICATION
+#  Fixed for Android 14 Strict Security
+# ─────────────────────────────────────────
 def start_foreground():
     try:
         Context = autoclass('android.content.Context')
@@ -742,8 +746,8 @@ def start_foreground():
         NC      = autoclass('android.app.NotificationChannel')
         svc     = get_service()
 
-        channel_id = "sara_bg_v2"
-        ch = NC(channel_id, "S.A.R.A Background", NM.IMPORTANCE_LOW)
+        channel_id = "sara_bg_v3"
+        ch = NC(channel_id, "S.A.R.A Active", NM.IMPORTANCE_LOW)
         ch.setDescription("Sara is listening for commands")
         svc.getSystemService(Context.NOTIFICATION_SERVICE)\
            .createNotificationChannel(ch)
@@ -752,15 +756,23 @@ def start_foreground():
 
         notification = NB(svc, channel_id)\
             .setContentTitle("S.A.R.A is Active")\
-            .setContentText("Say 'Sara' to activate")\
+            .setContentText("Listening in the background...")\
             .setSmallIcon(icon)\
             .setOngoing(True)\
             .build()
 
-        svc.startForeground(1, notification)
-        print("[Foreground] ✅ Started")
+        # ANDROID 14 CRASH FIX: 
+        # You must explicitly pass the 128 flag (Microphone Type) 
+        # or the OS will instantly kill the app.
+        try:
+            svc.startForeground(1, notification, 128)
+        except Exception:
+            # Fallback for older Android versions
+            svc.startForeground(1, notification)
+            
+        print("[Foreground] ✅ Started safely without OS crash")
     except Exception as e:
-        print(f"[Foreground] Error: {e}")
+        print(f"[Foreground] Critical Error: {e}")
 
 # ─────────────────────────────────────────
 #  STT ENGINE — Fixed scope & signatures
